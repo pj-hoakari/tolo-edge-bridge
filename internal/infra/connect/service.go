@@ -1,3 +1,4 @@
+// Package connect provides the Connect HTTP transport for this service.
 package connect
 
 import (
@@ -6,9 +7,10 @@ import (
 	"log/slog"
 
 	connectrpc "connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
-	greetv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1"
-	"github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1/greetv1connect"
+	signalingv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 )
@@ -41,32 +43,51 @@ func InternalError(ctx context.Context, err error) *connectrpc.Error {
 	return connectrpc.NewError(connectrpc.CodeInternal, errInternal) //nolint:forbidigo // the one place that builds internal errors
 }
 
-// Service is the Connect transport implementation of GreetService.
 type Service struct {
-	greetv1connect.UnimplementedGreetServiceHandler
-	greetService application.GreetUseCases
+	signalingv1connect.UnimplementedEdgeRegistryServiceHandler
+	signalingv1connect.UnimplementedSignalingServiceHandler
+	signaling *application.SignalingService
 }
 
-func NewService(greetService application.GreetUseCases) *Service {
+func NewService(signaling *application.SignalingService) *Service {
 	return &Service{
-		UnimplementedGreetServiceHandler: greetv1connect.UnimplementedGreetServiceHandler{},
-		greetService:                     greetService,
+		UnimplementedEdgeRegistryServiceHandler: signalingv1connect.UnimplementedEdgeRegistryServiceHandler{},
+		UnimplementedSignalingServiceHandler:    signalingv1connect.UnimplementedSignalingServiceHandler{},
+		signaling:                               signaling,
 	}
 }
 
-func (s *Service) Greet(ctx context.Context, req *connectrpc.Request[greetv1.GreetRequest]) (*connectrpc.Response[greetv1.GreetResponse], error) {
-	greeting, err := s.greetService.Greet(ctx, application.GreetInput{
-		Name: req.Msg.GetName(),
-	})
+func (s *Service) ListAliveEdges(ctx context.Context, _ *connectrpc.Request[signalingv1.ListAliveEdgesRequest]) (*connectrpc.Response[signalingv1.ListAliveEdgesResponse], error) {
+	edges, err := s.signaling.ListAliveEdges(ctx)
 	if err != nil {
-		if errors.Is(err, domain.ErrGreetingNameRequired) {
-			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err)
-		}
-
 		return nil, InternalError(ctx, err)
 	}
 
-	return connectrpc.NewResponse(&greetv1.GreetResponse{
-		Greeting: greeting.Message(),
-	}), nil
+	res := make([]*signalingv1.Edge, 0, len(edges))
+	for _, edge := range edges {
+		res = append(res, &signalingv1.Edge{
+			Id:         string(edge.ID),
+			LastSeenAt: timestamppb.New(edge.LastSeenAt),
+		})
+	}
+
+	return connectrpc.NewResponse(&signalingv1.ListAliveEdgesResponse{Edges: res}), nil
+}
+
+func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[signalingv1.RequestConnectionRequest]) (*connectrpc.Response[signalingv1.RequestConnectionResponse], error) {
+	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
+		EdgeID: req.Msg.GetEdgeId(),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrEdgeIDRequired):
+			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err)
+		case errors.Is(err, domain.ErrEdgeNotFound):
+			return nil, connectrpc.NewError(connectrpc.CodeNotFound, err)
+		default:
+			return nil, InternalError(ctx, err)
+		}
+	}
+
+	return connectrpc.NewResponse(&signalingv1.RequestConnectionResponse{SessionId: string(sessionID)}), nil
 }

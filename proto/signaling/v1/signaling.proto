@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package signaling.v1;
+
+// management からの接続要求を受け、Firestore を通じて edge に通知する（シグナリング開始）。
+// SDP/ICE の交換自体は edge と management が Firestore 上のセッションを介して行うため、
+// 本サービスはセッション（通知）の作成のみを担当する。
+service SignalingService {
+  // 指定した edge への接続を要求する。
+  // signaling は Firestore に接続セッションを作成して edge に通知し、session_id を返す。
+  rpc RequestConnection(RequestConnectionRequest) returns (RequestConnectionResponse) {}
+}
+
+message RequestConnectionRequest {
+  // 接続先 edge の ID。
+  string edge_id = 1;
+}
+
+message RequestConnectionResponse {
+  // 作成された接続セッションの ID。edge と management はこの ID のセッションで SDP/ICE を交換する。
+  string session_id = 1;
+}

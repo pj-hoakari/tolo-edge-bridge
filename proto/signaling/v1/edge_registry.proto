@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package signaling.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message Edge {
+  string id = 1;
+  google.protobuf.Timestamp last_seen_at = 2;
+}
+
+message ListAliveEdgesRequest {}
+
+message ListAliveEdgesResponse {
+  repeated Edge edges = 1;
+}
+
+service EdgeRegistryService {
+  rpc ListAliveEdges(ListAliveEdgesRequest) returns (ListAliveEdgesResponse) {}
+}

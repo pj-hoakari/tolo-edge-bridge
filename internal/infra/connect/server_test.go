@@ -2,7 +2,6 @@ package connect
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -10,350 +9,131 @@ import (
 	"time"
 
 	connectrpc "connectrpc.com/connect"
+	"go.uber.org/mock/gomock"
 
-	internaljwt "github.com/pj-hoakari/internal-jwt-handling"
-	"github.com/pj-hoakari/internal-jwt-handling/jwks"
-	"github.com/pj-hoakari/internal-jwt-handling/jwtgen"
-	"github.com/pj-hoakari/internal-jwt-handling/verifier"
-
-	greetv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1"
-	"github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1/greetv1connect"
+	signalingv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/application/applicationmock"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
-	"github.com/pj-hoakari/tolo-edge-bridge/internal/tenantctx"
 )
 
-// newTestJWKSURL serves keys from an httptest endpoint, mirroring the Service
-// Gateway publishing its signing keys, and returns the URL to fetch them from.
-func newTestJWKSURL(t *testing.T, keys internaljwt.JWKS) string {
+func newTestRepository(t *testing.T) *applicationmock.MockEdgeRepository {
 	t.Helper()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+	return applicationmock.NewMockEdgeRepository(gomock.NewController(t))
+}
 
-		if err := json.NewEncoder(w).Encode(keys); err != nil {
-			t.Errorf("encode JWKS: %v", err)
-		}
-	}))
+func newSignalingService(repo application.EdgeRepository) *application.SignalingService {
+	return application.NewSignalingService(repo, time.Now)
+}
+
+func newTestServer(t *testing.T, repo application.EdgeRepository) *httptest.Server {
+	t.Helper()
+
+	routes, err := Routes(newSignalingService(repo))
+	if err != nil {
+		t.Fatalf("Routes() error = %v", err)
+	}
+
+	mux := http.NewServeMux()
+	routes(mux)
+
+	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	return server.URL
+	return server
 }
 
-// newTestVerifier builds a verifier backed by an httptest JWKS endpoint serving
-// keys.
-func newTestVerifier(t *testing.T, keys internaljwt.JWKS) *verifier.Verifier {
-	t.Helper()
-
-	// The cooldowns are collapsed so that a refresh on an unknown kid is never
-	// held off within a test run.
-	cache, err := jwks.New(jwks.Config{
-		URL:             newTestJWKSURL(t, keys),
-		RefreshCooldown: time.Nanosecond,
-		FailureCooldown: time.Nanosecond,
-	})
-	if err != nil {
-		t.Fatalf("create JWKS cache: %v", err)
-	}
-
-	tokenVerifier, err := verifier.New(DefaultInternalJWTIssuer, DefaultInternalJWTAudience, cache)
-	if err != nil {
-		t.Fatalf("create internal JWT verifier: %v", err)
-	}
-
-	return tokenVerifier
-}
-
-// newTestHandler builds a handler serving the production service routes wired
-// to a verifier trusting keys, serving greetService.
-func newTestHandler(t *testing.T, keys internaljwt.JWKS, greetService application.GreetUseCases) http.Handler {
-	t.Helper()
-
-	routes, err := RoutesWithVerifier(greetService, newTestVerifier(t, keys))
-	if err != nil {
-		t.Fatalf("RoutesWithVerifier() error = %v", err)
-	}
-
-	mux := http.NewServeMux()
-	routes(mux)
-
-	return mux
-}
-
-func newTestHandlerForJWKSURL(t *testing.T, jwksURL string, greetService application.GreetUseCases) http.Handler {
-	t.Helper()
-
-	cache, err := jwks.New(jwks.Config{
-		URL:             jwksURL,
-		RefreshCooldown: time.Nanosecond,
-		FailureCooldown: time.Nanosecond,
-		RetryBackoff:    []time.Duration{},
-	})
-	if err != nil {
-		t.Fatalf("create JWKS cache: %v", err)
-	}
-
-	tokenVerifier, err := verifier.New(DefaultInternalJWTIssuer, DefaultInternalJWTAudience, cache)
-	if err != nil {
-		t.Fatalf("create internal JWT verifier: %v", err)
-	}
-
-	routes, err := RoutesWithVerifier(greetService, tokenVerifier)
-	if err != nil {
-		t.Fatalf("RoutesWithVerifier() error = %v", err)
-	}
-
-	mux := http.NewServeMux()
-	routes(mux)
-
-	return mux
-}
-
-// mintInternalJWT issues an internal JWT for the issuer and audience this
-// service verifies against.
-func mintInternalJWT(t *testing.T, tokenUse, scope, tenantPublicID string) (string, internaljwt.JWKS) {
-	t.Helper()
-
-	return mintInternalJWTFor(t, DefaultInternalJWTIssuer, DefaultInternalJWTAudience, tokenUse, scope, tenantPublicID)
-}
-
-// mintInternalJWTFor issues an internal JWT signed by a fresh key, returning
-// the Authorization header value and the JWKS document publishing the key. An
-// empty tenantPublicID omits the tenant_id claim.
-func mintInternalJWTFor(t *testing.T, issuer, audience, tokenUse, scope, tenantPublicID string) (string, internaljwt.JWKS) {
-	t.Helper()
-
-	output, err := jwtgen.Generate(jwtgen.Config{
-		Issuer:         issuer,
-		Audience:       audience,
-		TokenUse:       tokenUse,
-		TenantPublicID: tenantPublicID,
-		Scope:          scope,
-		KeyID:          "test-key",
-		TTL:            time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("generate internal JWT: %v", err)
-	}
-
-	return "Bearer " + output.Token, output.JWKS
-}
-
-func TestRoutesWithJWTSettings(t *testing.T) {
+func TestRoutesServeListAliveEdges(t *testing.T) {
 	t.Parallel()
 
-	t.Run("verifies a token against the JWKS the settings locate", func(t *testing.T) {
-		t.Parallel()
+	repo := newTestRepository(t)
+	seen := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	repo.EXPECT().ListEdgesSeenAfter(gomock.Any(), gomock.Any()).
+		Return([]domain.Edge{{ID: "edge-1", LastSeenAt: seen}}, nil)
 
-		authorization, keys := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
+	server := newTestServer(t, repo)
+	client := signalingv1connect.NewEdgeRegistryServiceClient(server.Client(), server.URL)
 
-		settings := DefaultJWTSettings()
-		settings.JWKSURL = newTestJWKSURL(t, keys)
-
-		routes, err := RoutesWithJWTSettings(application.NewGreetService(), settings)
-		if err != nil {
-			t.Fatalf("RoutesWithJWTSettings() error = %v", err)
-		}
-
-		mux := http.NewServeMux()
-		routes(mux)
-
-		httpServer := httptest.NewServer(mux)
-		t.Cleanup(httpServer.Close)
-		client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-		req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-		req.Header().Set("Authorization", authorization)
-
-		res, err := client.Greet(context.Background(), req)
-		if err != nil {
-			t.Fatalf("Greet() error = %v", err)
-		}
-
-		if got, want := res.Msg.GetGreeting(), "Hello, Ada!"; got != want {
-			t.Errorf("Greeting = %q, want %q", got, want)
-		}
-	})
-
-	t.Run("rejects settings without a JWKS URL", func(t *testing.T) {
-		t.Parallel()
-
-		settings := DefaultJWTSettings()
-		settings.JWKSURL = ""
-
-		_, err := RoutesWithJWTSettings(application.NewGreetService(), settings)
-		if !errors.Is(err, jwks.ErrMissingURL) {
-			t.Fatalf("RoutesWithJWTSettings() error = %v, want %v", err, jwks.ErrMissingURL)
-		}
-	})
-}
-
-func TestGreetServiceAuthz(t *testing.T) {
-	t.Parallel()
-
-	authorization, keys := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
-	httpServer := httptest.NewServer(newTestHandler(t, keys, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	t.Run("rejects missing bearer token", func(t *testing.T) {
-		_, err := client.Greet(context.Background(), connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"}))
-		if connectrpc.CodeOf(err) != connectrpc.CodeUnauthenticated {
-			t.Fatalf("Greet() error code = %v, want %v", connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated)
-		}
-	})
-
-	t.Run("accepts internal JWT with required scope", func(t *testing.T) {
-		req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-		req.Header().Set("Authorization", authorization)
-
-		res, err := client.Greet(context.Background(), req)
-		if err != nil {
-			t.Fatalf("Greet() error = %v", err)
-		}
-
-		if got, want := res.Msg.GetGreeting(), "Hello, Ada!"; got != want {
-			t.Errorf("Greeting = %q, want %q", got, want)
-		}
-	})
-}
-
-func TestGreetServiceAuthzRejectsMissingScope(t *testing.T) {
-	t.Parallel()
-
-	authorization, keys := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.write", "a1b2c3d4e5f60718")
-	httpServer := httptest.NewServer(newTestHandler(t, keys, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", authorization)
-
-	_, err := client.Greet(context.Background(), req)
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
-		t.Fatalf("Greet() error code = %v, want %v", got, want)
-	}
-}
-
-func TestGreetServiceAuthzRejectsUnknownSigningKey(t *testing.T) {
-	t.Parallel()
-
-	// The handler trusts a JWKS publishing neither the key nor the kid that
-	// signed the token below.
-	_, trustedKeys := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
-	for i := range trustedKeys.Keys {
-		trustedKeys.Keys[i].KeyID = "other-key"
-	}
-
-	foreignAuthorization, _ := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
-	httpServer := httptest.NewServer(newTestHandler(t, trustedKeys, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", foreignAuthorization)
-
-	_, err := client.Greet(context.Background(), req)
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
-		t.Fatalf("Greet() error code = %v, want %v", got, want)
-	}
-}
-
-func TestGreetServiceAuthzUnavailableWhenJWKSUnreachable(t *testing.T) {
-	t.Parallel()
-
-	jwksServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	t.Cleanup(jwksServer.Close)
-
-	authorization, _ := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
-	httpServer := httptest.NewServer(newTestHandlerForJWKSURL(t, jwksServer.URL, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", authorization)
-
-	_, err := client.Greet(context.Background(), req)
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnavailable; got != want {
-		t.Fatalf("Greet() error code = %v, want %v", got, want)
-	}
-}
-
-func TestGreetServiceAuthzRejectsServiceToken(t *testing.T) {
-	t.Parallel()
-
-	// AUTH_LEVEL_AUTHENTICATED admits the default token_use only, so a service
-	// token is not a credential for this RPC.
-	authorization, keys := mintInternalJWT(t, internaljwt.TokenUseService, "", "")
-	httpServer := httptest.NewServer(newTestHandler(t, keys, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", authorization)
-
-	_, err := client.Greet(context.Background(), req)
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
-		t.Fatalf("Greet() error code = %v, want %v", got, want)
-	}
-}
-
-func TestGreetServiceAuthzRejectsAudienceMismatch(t *testing.T) {
-	t.Parallel()
-
-	// The token names another service as its audience, so it is not a
-	// credential this service may accept even though the key verifies.
-	authorization, keys := mintInternalJWTFor(
-		t,
-		DefaultInternalJWTIssuer,
-		"other-service",
-		internaljwt.TokenUseTenantAccess,
-		"greeting.read",
-		"a1b2c3d4e5f60718",
-	)
-	httpServer := httptest.NewServer(newTestHandler(t, keys, application.NewGreetService()))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", authorization)
-
-	_, err := client.Greet(context.Background(), req)
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
-		t.Fatalf("Greet() error code = %v, want %v", got, want)
-	}
-}
-
-// tenantEchoService greets the tenant public ID found in the request context,
-// letting the test observe the verified tenant_id claim reaching the handler
-// without changing the real greet service.
-type tenantEchoService struct{}
-
-func (tenantEchoService) Greet(ctx context.Context, _ application.GreetInput) (domain.Greeting, error) {
-	tenantPublicID, _ := tenantctx.TenantPublicIDFromContext(ctx)
-
-	return domain.NewGreeting(tenantPublicID)
-}
-
-func TestGreetServiceInjectsTenantPublicID(t *testing.T) {
-	t.Parallel()
-
-	authorization, keys := mintInternalJWT(t, internaljwt.TokenUseTenantAccess, "greeting.read", "a1b2c3d4e5f60718")
-	httpServer := httptest.NewServer(newTestHandler(t, keys, tenantEchoService{}))
-	t.Cleanup(httpServer.Close)
-	client := greetv1connect.NewGreetServiceClient(httpServer.Client(), httpServer.URL)
-
-	req := connectrpc.NewRequest(&greetv1.GreetRequest{Name: "Ada"})
-	req.Header().Set("Authorization", authorization)
-
-	res, err := client.Greet(context.Background(), req)
+	res, err := client.ListAliveEdges(context.Background(), connectrpc.NewRequest(&signalingv1.ListAliveEdgesRequest{}))
 	if err != nil {
-		t.Fatalf("Greet() error = %v", err)
+		t.Fatalf("ListAliveEdges() error = %v", err)
 	}
 
-	if got, want := res.Msg.GetGreeting(), "Hello, a1b2c3d4e5f60718!"; got != want {
-		t.Errorf("tenant ID echoed by handler = %q, want %q", got, want)
+	edges := res.Msg.GetEdges()
+	if len(edges) != 1 {
+		t.Fatalf("edges = %v, want one edge", edges)
+	}
+
+	if got, want := edges[0].GetId(), "edge-1"; got != want {
+		t.Errorf("Id = %q, want %q", got, want)
+	}
+
+	if got := edges[0].GetLastSeenAt().AsTime(); !got.Equal(seen) {
+		t.Errorf("LastSeenAt = %v, want %v", got, seen)
+	}
+}
+
+func TestRoutesServeRequestConnection(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepository(t)
+	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("edge-1")).Return(true, nil)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
+
+	server := newTestServer(t, repo)
+	client := signalingv1connect.NewSignalingServiceClient(server.Client(), server.URL)
+
+	res, err := client.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: "edge-1"}))
+	if err != nil {
+		t.Fatalf("RequestConnection() error = %v", err)
+	}
+
+	if got, want := res.Msg.GetSessionId(), "sess-1"; got != want {
+		t.Errorf("SessionId = %q, want %q", got, want)
+	}
+}
+
+func TestServiceRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(newSignalingService(newTestRepository(t)))
+
+	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: ""}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
+		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
+	}
+}
+
+func TestServiceRequestConnectionRejectsUnknownEdge(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepository(t)
+	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("missing")).Return(false, nil)
+	service := NewService(newSignalingService(repo))
+
+	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: "missing"}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeNotFound; got != want {
+		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
+	}
+}
+
+func TestServiceRepositoryFailureIsInternal(t *testing.T) {
+	captureLog(t)
+
+	repo := newTestRepository(t)
+	repo.EXPECT().ListEdgesSeenAfter(gomock.Any(), gomock.Any()).Return(nil, errors.New("firestore unavailable"))
+	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("edge-1")).Return(false, errors.New("firestore unavailable"))
+	service := NewService(newSignalingService(repo))
+
+	_, err := service.ListAliveEdges(context.Background(), connectrpc.NewRequest(&signalingv1.ListAliveEdgesRequest{}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
+		t.Errorf("ListAliveEdges() error code = %v, want %v", got, want)
+	}
+
+	_, err = service.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: "edge-1"}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
+		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
 	}
 }
