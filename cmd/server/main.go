@@ -75,7 +75,7 @@ func run() error {
 
 	slog.Info("firestore configured", "project", firestoreProjectID, "emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"))
 
-	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient), time.Now)
+	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient))
 
 	signalingRoutes, err := connectinfra.Routes(signalingService)
 	if err != nil {

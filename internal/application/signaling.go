@@ -3,7 +3,6 @@ package application
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 )
@@ -14,20 +13,10 @@ type RequestConnectionInput struct {
 
 type SignalingService struct {
 	edges EdgeRepository
-	now   func() time.Time
 }
 
-func NewSignalingService(edges EdgeRepository, now func() time.Time) *SignalingService {
-	return &SignalingService{edges: edges, now: now}
-}
-
-func (s *SignalingService) ListAliveEdges(ctx context.Context) ([]domain.Edge, error) {
-	edges, err := s.edges.ListEdgesSeenAfter(ctx, domain.AliveCutoff(s.now()))
-	if err != nil {
-		return nil, fmt.Errorf("list alive edges: %w", err)
-	}
-
-	return edges, nil
+func NewSignalingService(edges EdgeRepository) *SignalingService {
+	return &SignalingService{edges: edges}
 }
 
 func (s *SignalingService) RequestConnection(ctx context.Context, input RequestConnectionInput) (domain.SessionID, error) {

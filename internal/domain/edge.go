@@ -1,11 +1,6 @@
 package domain
 
-import (
-	"errors"
-	"time"
-)
-
-const AliveWindow = 30 * time.Second
+import "errors"
 
 var (
 	ErrEdgeIDRequired = errors.New("edge id is required")
@@ -21,13 +16,4 @@ func NewEdgeID(value string) (EdgeID, error) {
 	return EdgeID(value), nil
 }
 
-type Edge struct {
-	ID         EdgeID
-	LastSeenAt time.Time
-}
-
 type SessionID string
-
-func AliveCutoff(now time.Time) time.Time {
-	return now.Add(-AliveWindow)
-}
