@@ -11,11 +11,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pj-hoakari/go-service-template/internal/application"
-	connectinfra "github.com/pj-hoakari/go-service-template/internal/infra/connect"
-	"github.com/pj-hoakari/go-service-template/internal/infra/httpapi"
-	"github.com/pj-hoakari/go-service-template/internal/logging"
-	"github.com/pj-hoakari/go-service-template/internal/telemetry"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/httpapi"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/logging"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/telemetry"
 )
 
 const (
