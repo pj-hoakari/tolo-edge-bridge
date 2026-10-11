@@ -4,8 +4,6 @@ go 1.27.1
 
 tool (
 	connectrpc.com/connect/cmd/protoc-gen-connect-go
-	github.com/pj-hoakari/internal-jwt-handling/cmd/jwtgen
-	github.com/pj-hoakari/protoc-gen-authz-go/cmd/protoc-gen-authz-go
 	go.uber.org/mock/mockgen
 	google.golang.org/protobuf/cmd/protoc-gen-go
 )
@@ -14,9 +12,6 @@ require (
 	connectrpc.com/connect v1.21.0
 	connectrpc.com/otelconnect v0.10.0
 	github.com/go-logr/logr v1.4.4
-	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/pj-hoakari/internal-jwt-handling v0.2.0
-	github.com/pj-hoakari/protoc-gen-authz-go v0.3.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.47.0
 	go.opentelemetry.io/otel/sdk v1.47.0

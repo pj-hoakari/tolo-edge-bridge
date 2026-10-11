@@ -46,10 +46,6 @@ func run() error {
 	defer stop()
 
 	addr := getenv("SERVER_ADDR", defaultAddr)
-	jwtSettings := connectinfra.DefaultJWTSettings()
-	jwtSettings.JWKSURL = getenv("INTERNAL_JWKS_URL", jwtSettings.JWKSURL)
-	jwtSettings.Issuer = getenv("INTERNAL_JWT_ISSUER", jwtSettings.Issuer)
-	jwtSettings.Audience = getenv("INTERNAL_JWT_AUDIENCE", jwtSettings.Audience)
 
 	shutdownTracing, err := telemetry.Setup(ctx)
 	if err != nil {
@@ -61,9 +57,7 @@ func run() error {
 		slog.Info("tracing enabled", "service", telemetry.ServiceName())
 	}
 
-	greetService := application.NewGreetService()
-
-	greetRoutes, err := connectinfra.RoutesWithJWTSettings(greetService, jwtSettings)
+	greetRoutes, err := connectinfra.Routes(application.NewGreetService())
 	if err != nil {
 		return fmt.Errorf("build handler: %w", err)
 	}
