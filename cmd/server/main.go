@@ -11,6 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	gcpfirestore "cloud.google.com/go/firestore"
+
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/firestore"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/httpapi"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/logging"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/telemetry"
@@ -22,6 +27,8 @@ const (
 	shutdownTimeout   = 10 * time.Second
 	readHeaderTimeout = 10 * time.Second
 )
+
+var errFirestoreProjectIDRequired = errors.New("FIRESTORE_PROJECT_ID is required")
 
 func main() {
 	if err := run(); err != nil {
@@ -45,6 +52,11 @@ func run() error {
 
 	addr := getenv("SERVER_ADDR", defaultAddr)
 
+	firestoreProjectID := os.Getenv("FIRESTORE_PROJECT_ID")
+	if firestoreProjectID == "" {
+		return errFirestoreProjectIDRequired
+	}
+
 	shutdownTracing, err := telemetry.Setup(ctx)
 	if err != nil {
 		return fmt.Errorf("setup tracing: %w", err)
@@ -55,7 +67,22 @@ func run() error {
 		slog.Info("tracing enabled", "service", telemetry.ServiceName())
 	}
 
-	handler := httpapi.NewHandler(httpapi.HealthRoutes())
+	firestoreClient, err := gcpfirestore.NewClient(ctx, firestoreProjectID)
+	if err != nil {
+		return fmt.Errorf("create firestore client: %w", err)
+	}
+	defer closeFirestore(firestoreClient)
+
+	slog.Info("firestore configured", "project", firestoreProjectID, "emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"))
+
+	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient), time.Now)
+
+	signalingRoutes, err := connectinfra.Routes(signalingService)
+	if err != nil {
+		return fmt.Errorf("build handler: %w", err)
+	}
+
+	handler := httpapi.NewHandler(httpapi.HealthRoutes(), signalingRoutes)
 
 	httpServer := &http.Server{
 		Addr:              addr,
@@ -120,6 +147,12 @@ func shutdownTracingWithTimeout(shutdown telemetry.ShutdownFunc) {
 
 	if err := shutdown(ctx); err != nil {
 		slog.Error("shutdown tracing failed", "error", err)
+	}
+}
+
+func closeFirestore(client *gcpfirestore.Client) {
+	if err := client.Close(); err != nil {
+		slog.Error("close firestore client failed", "error", err)
 	}
 }
 
