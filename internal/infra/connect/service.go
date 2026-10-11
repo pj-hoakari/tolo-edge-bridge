@@ -82,8 +82,6 @@ func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request
 		switch {
 		case errors.Is(err, domain.ErrEdgeIDRequired):
 			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err)
-		case errors.Is(err, domain.ErrEdgeNotFound):
-			return nil, connectrpc.NewError(connectrpc.CodeNotFound, err)
 		default:
 			return nil, InternalError(ctx, err)
 		}

@@ -36,15 +36,6 @@ func (s *SignalingService) RequestConnection(ctx context.Context, input RequestC
 		return "", err
 	}
 
-	exists, err := s.edges.EdgeExists(ctx, edgeID)
-	if err != nil {
-		return "", fmt.Errorf("check edge %q: %w", edgeID, err)
-	}
-
-	if !exists {
-		return "", domain.ErrEdgeNotFound
-	}
-
 	sessionID, err := s.edges.CreateSession(ctx, edgeID)
 	if err != nil {
 		return "", fmt.Errorf("create session for edge %q: %w", edgeID, err)
