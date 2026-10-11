@@ -7,7 +7,6 @@ import (
 	"log/slog"
 
 	connectrpc "connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	signalingv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1"
 	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
@@ -44,34 +43,15 @@ func InternalError(ctx context.Context, err error) *connectrpc.Error {
 }
 
 type Service struct {
-	signalingv1connect.UnimplementedEdgeRegistryServiceHandler
 	signalingv1connect.UnimplementedSignalingServiceHandler
 	signaling *application.SignalingService
 }
 
 func NewService(signaling *application.SignalingService) *Service {
 	return &Service{
-		UnimplementedEdgeRegistryServiceHandler: signalingv1connect.UnimplementedEdgeRegistryServiceHandler{},
-		UnimplementedSignalingServiceHandler:    signalingv1connect.UnimplementedSignalingServiceHandler{},
-		signaling:                               signaling,
+		UnimplementedSignalingServiceHandler: signalingv1connect.UnimplementedSignalingServiceHandler{},
+		signaling:                            signaling,
 	}
-}
-
-func (s *Service) ListAliveEdges(ctx context.Context, _ *connectrpc.Request[signalingv1.ListAliveEdgesRequest]) (*connectrpc.Response[signalingv1.ListAliveEdgesResponse], error) {
-	edges, err := s.signaling.ListAliveEdges(ctx)
-	if err != nil {
-		return nil, InternalError(ctx, err)
-	}
-
-	res := make([]*signalingv1.Edge, 0, len(edges))
-	for _, edge := range edges {
-		res = append(res, &signalingv1.Edge{
-			Id:         string(edge.ID),
-			LastSeenAt: timestamppb.New(edge.LastSeenAt),
-		})
-	}
-
-	return connectrpc.NewResponse(&signalingv1.ListAliveEdgesResponse{Edges: res}), nil
 }
 
 func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[signalingv1.RequestConnectionRequest]) (*connectrpc.Response[signalingv1.RequestConnectionResponse], error) {

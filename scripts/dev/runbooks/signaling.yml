@@ -1,4 +1,4 @@
-desc: Firestore エミュレータに edge を置き、ListAliveEdges と RequestConnection の応答と書き込みを確かめる
+desc: Firestore エミュレータに対して RequestConnection の応答と書き込みを確かめる
 runners:
   bridge: http://server:8080
   firestore: http://firebase-emulator:8080
@@ -19,50 +19,17 @@ steps:
       /emulator/v1/projects/demo-tolo/databases/(default)/documents:
         delete: {}
     test: current.res.status == 200
-  seedLiveEdge:
-    firestore:
-      "{{ vars.documents }}/edges/edge-live":
-        patch:
-          headers:
-            Authorization: Bearer owner
-          body:
-            application/json:
-              fields:
-                lastSeenAt:
-                  timestampValue: "{{ now().UTC().Format('2006-01-02T15:04:05Z') }}"
-    test: current.res.status == 200
-  seedStaleEdge:
-    firestore:
-      "{{ vars.documents }}/edges/edge-stale":
-        patch:
-          headers:
-            Authorization: Bearer owner
-          body:
-            application/json:
-              fields:
-                lastSeenAt:
-                  timestampValue: "{{ now().UTC().Add(duration('-60s')).Format('2006-01-02T15:04:05Z') }}"
-    test: current.res.status == 200
-  listAliveEdges:
-    bridge:
-      /signaling.v1.EdgeRegistryService/ListAliveEdges:
-        post:
-          body:
-            application/json: {}
-    test: |
-      current.res.status == 200
-      && map(current.res.body.edges, .id) == ["edge-live"]
   requestConnection:
     bridge:
       /signaling.v1.SignalingService/RequestConnection:
         post:
           body:
             application/json:
-              edgeId: edge-live
+              edgeId: edge-1
     test: current.res.status == 200 && current.res.body.sessionId != ""
   session:
     firestore:
-      "{{ vars.documents }}/edges/edge-live/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+      "{{ vars.documents }}/edges/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
         get:
           headers:
             Authorization: Bearer owner
@@ -78,11 +45,3 @@ steps:
             application/json:
               edgeId: ""
     test: current.res.status == 400 && current.res.body.code == "invalid_argument"
-  edgeWithoutPresence:
-    bridge:
-      /signaling.v1.SignalingService/RequestConnection:
-        post:
-          body:
-            application/json:
-              edgeId: edge-unknown
-    test: current.res.status == 200 && current.res.body.sessionId != ""

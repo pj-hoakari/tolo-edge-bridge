@@ -12,7 +12,6 @@ package applicationmock
 import (
 	context "context"
 	reflect "reflect"
-	time "time"
 
 	domain "github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 	gomock "go.uber.org/mock/gomock"
@@ -55,19 +54,4 @@ func (m *MockEdgeRepository) CreateSession(ctx context.Context, edgeID domain.Ed
 func (mr *MockEdgeRepositoryMockRecorder) CreateSession(ctx, edgeID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSession", reflect.TypeOf((*MockEdgeRepository)(nil).CreateSession), ctx, edgeID)
-}
-
-// ListEdgesSeenAfter mocks base method.
-func (m *MockEdgeRepository) ListEdgesSeenAfter(ctx context.Context, cutoff time.Time) ([]domain.Edge, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "ListEdgesSeenAfter", ctx, cutoff)
-	ret0, _ := ret[0].([]domain.Edge)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// ListEdgesSeenAfter indicates an expected call of ListEdgesSeenAfter.
-func (mr *MockEdgeRepositoryMockRecorder) ListEdgesSeenAfter(ctx, cutoff any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListEdgesSeenAfter", reflect.TypeOf((*MockEdgeRepository)(nil).ListEdgesSeenAfter), ctx, cutoff)
 }

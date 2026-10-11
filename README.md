@@ -48,12 +48,10 @@ task runn
 ```
 
 `task runn` は compose を起動してから `docker compose run --rm -T runn` を実行する  
-runbook はエミュレータのデータを消してから、`lastSeenAt` が現在時刻の edge と 60 秒前の edge を Firestore の REST API で置き、次を確かめる
+runbook はエミュレータのデータを消してから、次を確かめる
 
-- `ListAliveEdges` が現在時刻の edge だけを返す
 - `RequestConnection` が session ID を返し、`edges/{edgeId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
 - 空の `edge_id` は `invalid_argument` になる
-- 在席の記録がない edge でも `RequestConnection` が session ID を返す
 
 ### 環境変数
 

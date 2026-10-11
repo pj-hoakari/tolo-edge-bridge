@@ -19,11 +19,9 @@ func Routes(signaling *application.SignalingService) (func(mux *http.ServeMux), 
 
 	service := NewService(signaling)
 	interceptors := connectrpc.WithInterceptors(tracing)
-	edgeRegistryPath, edgeRegistryHandler := signalingv1connect.NewEdgeRegistryServiceHandler(service, interceptors)
 	signalingPath, signalingHandler := signalingv1connect.NewSignalingServiceHandler(service, interceptors)
 
 	return func(mux *http.ServeMux) {
-		mux.Handle(edgeRegistryPath, edgeRegistryHandler)
 		mux.Handle(signalingPath, signalingHandler)
 	}, nil
 }
