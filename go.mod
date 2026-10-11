@@ -1,4 +1,4 @@
-module github.com/pj-hoakari/go-service-template
+module github.com/pj-hoakari/tolo-edge-bridge
 
 go 1.27.1
 

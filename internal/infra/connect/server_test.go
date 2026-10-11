@@ -16,11 +16,11 @@ import (
 	"github.com/pj-hoakari/internal-jwt-handling/jwtgen"
 	"github.com/pj-hoakari/internal-jwt-handling/verifier"
 
-	greetv1 "github.com/pj-hoakari/go-service-template/gen/greet/v1"
-	"github.com/pj-hoakari/go-service-template/gen/greet/v1/greetv1connect"
-	"github.com/pj-hoakari/go-service-template/internal/application"
-	"github.com/pj-hoakari/go-service-template/internal/domain"
-	"github.com/pj-hoakari/go-service-template/internal/tenantctx"
+	greetv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/greet/v1/greetv1connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/tenantctx"
 )
 
 // newTestJWKSURL serves keys from an httptest endpoint, mirroring the Service
