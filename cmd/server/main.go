@@ -11,8 +11,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
-	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/httpapi"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/logging"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/telemetry"
@@ -57,12 +55,7 @@ func run() error {
 		slog.Info("tracing enabled", "service", telemetry.ServiceName())
 	}
 
-	greetRoutes, err := connectinfra.Routes(application.NewGreetService())
-	if err != nil {
-		return fmt.Errorf("build handler: %w", err)
-	}
-
-	handler := httpapi.NewHandler(httpapi.HealthRoutes(), greetRoutes)
+	handler := httpapi.NewHandler(httpapi.HealthRoutes())
 
 	httpServer := &http.Server{
 		Addr:              addr,
