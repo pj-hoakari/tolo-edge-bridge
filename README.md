@@ -23,7 +23,7 @@ golangci-lint run
 
 ### Docker Compose での起動
 
-Docker Compose で開発サーバーを起動できる
+Docker Compose で開発サーバーと Firestore エミュレータを起動できる
 
 ```bash
 docker compose up --build
@@ -35,23 +35,40 @@ task up:build
 ```
 
 サーバーは `http://localhost:8080` で待ち受ける（停止は `task down`）  
-RPC を呼び出すには Service Gateway 発行の内部 JWT が必要なので、`go tool jwtgen` で生成した JWKS を配信する URL を `INTERNAL_JWKS_URL` で `server` に渡す（「内部 JWT」を参照）
+`server` は `FIRESTORE_EMULATOR_HOST=firebase-emulator:8080` で compose 内の Firestore エミュレータ（プロジェクト `demo-tolo`）に接続する  
+エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている
+
+### シナリオテスト（runn）
+
+[runn](https://github.com/k1LoW/runn) の runbook `scripts/dev/runbooks/signaling.yml` で、compose で起動したサーバーとエミュレータを通しで確認する  
+runn はホストに入れず、compose の `runn` サービス（profile `runn`）としてコンテナで動かす
+
+```bash
+task runn
+```
+
+`task runn` は compose を起動してから `docker compose run --rm -T runn` を実行する  
+runbook はエミュレータのデータを消してから、`lastSeenAt` が現在時刻の edge と 60 秒前の edge を Firestore の REST API で置き、次を確かめる
+
+- `ListAliveEdges` が現在時刻の edge だけを返す
+- `RequestConnection` が session ID を返し、`edges/{edgeId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
+- 空の `edge_id` は `invalid_argument`、存在しない edge は `not_found` になる
 
 ### 環境変数
 
 | 環境変数 | デフォルト | 内容 |
 | --- | --- | --- |
 | `SERVER_ADDR` | `:8080` | 待ち受けるアドレス |
-| `INTERNAL_JWKS_URL` | `http://gateway:8080/.well-known/jwks.json` | 内部 JWT の検証に使う JWKS の取得先 |
-| `INTERNAL_JWT_ISSUER` | `service-gateway` | 内部 JWT に期待する `iss` |
-| `INTERNAL_JWT_AUDIENCE` | `tolo-edge-bridge` | 内部 JWT に期待する `aud` |
+| `FIRESTORE_PROJECT_ID` | なし（必須） | 接続する Firestore の GCP プロジェクト ID。未設定ならサーバーは起動しない |
+| `FIRESTORE_EMULATOR_HOST` | なし | 設定すると Firestore クライアントが本番ではなくそのホストのエミュレータに接続する（クライアントライブラリの標準の挙動）。本番では設定しない |
 | `LOG_LEVEL` | `info` | ログに出力する最小レベル。`debug`／`info`／`warn`（`warning` も同義）／`error`／`critical` を取り、未知の値ならサーバーは起動しない |
 | `GOOGLE_CLOUD_PROJECT` | なし | 設定するとログの `logging.googleapis.com/trace` を `projects/<project>/traces/<trace_id>` 形式にし、Cloud Logging でトレースと相関させる。未設定なら素のトレース ID を出力する |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | なし | どちらかを設定したときだけ OTLP/HTTP で span を export する。未設定ならトレーシングは無効 |
 | `OTEL_SERVICE_NAME` | `tolo-edge-bridge` | トレースの `service.name` |
 
 ヘッダ・TLS・タイムアウトなどその他の `OTEL_EXPORTER_OTLP_*` は exporter がそのまま解釈する  
-ログは標準出力へ 1 行 1 件の JSON で書き出す
+ログは標準出力へ 1 行 1 件の JSON で書き出す  
+Firestore の認証はクライアントライブラリの Application Default Credentials に従う
 
 ### トレースの確認（Jaeger）
 
@@ -68,24 +85,6 @@ task up:build:o11y
 ```
 
 Jaeger UI は `http://localhost:16686`（停止は `task down:o11y`）
-
-### 内部 JWT
-
-ローカルでの動作確認には `internal-jwt-handling` 同梱の jwtgen CLI でトークンと JWKS を生成する  
-`go.mod` の `tool` に登録してあるので `go tool jwtgen` で実行できる
-
-```bash
-# ES256 の内部 JWT と対応する JWKS ドキュメントを JSON で出力
-go tool jwtgen -audience tolo-edge-bridge -tenant-public-id 0123456789abcdef -scope <scope> -ttl 10m
-```
-
-- `-token-use` は `tenant_access`（既定）、`event_access`、`registration`、`service` を取る
-- `tenant_access` では `-tenant-public-id`（ランダムな 16 文字 hex）と `-scope` が必須である。必要な scope は proto の `required_scopes` で宣言されている
-- `-issuer` の既定は `service-gateway`、`-audience` に既定はないので `tolo-edge-bridge` を明示する
-- そのほかのフラグは `-event-public-id`、`-origin-sub`、`-subject`、`-txn`、`-kid`（既定 `test-key`）、`-ttl`（既定 2 分）である
-
-出力は `token` / `claims` / `jwks` を持つ JSON である  
-`jwks` を任意の HTTP エンドポイント（例: ローカルのファイルサーバ）で配信し、`INTERNAL_JWKS_URL` にその URL を設定すると、`Authorization: Bearer <token>` で呼び出せる
 
 ### connect-es の生成
 
