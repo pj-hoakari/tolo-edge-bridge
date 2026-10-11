@@ -77,6 +77,12 @@ tasks:
         cmds:
             - docker compose -f compose.yml -f compose.o11y.yml down
 
+    runn:
+        desc: Run the runn scenarios against the Docker Compose stack.
+        cmds:
+            - docker compose up -d --build --wait
+            - docker compose run --rm -T runn
+
     proto:
         desc: Lint proto and regenerate connect-go code for development.
         cmds:
