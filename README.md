@@ -52,7 +52,8 @@ runbook はエミュレータのデータを消してから、`lastSeenAt` が�
 
 - `ListAliveEdges` が現在時刻の edge だけを返す
 - `RequestConnection` が session ID を返し、`edges/{edgeId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
-- 空の `edge_id` は `invalid_argument`、存在しない edge は `not_found` になる
+- 空の `edge_id` は `invalid_argument` になる
+- 在席の記録がない edge でも `RequestConnection` が session ID を返す
 
 ### 環境変数
 

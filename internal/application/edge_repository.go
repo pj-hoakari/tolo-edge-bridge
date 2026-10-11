@@ -11,6 +11,5 @@ import (
 
 type EdgeRepository interface {
 	ListEdgesSeenAfter(ctx context.Context, cutoff time.Time) ([]domain.Edge, error)
-	EdgeExists(ctx context.Context, edgeID domain.EdgeID) (bool, error)
 	CreateSession(ctx context.Context, edgeID domain.EdgeID) (domain.SessionID, error)
 }

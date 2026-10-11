@@ -56,7 +56,6 @@ func TestRequestConnection(t *testing.T) {
 	t.Parallel()
 
 	service, repo := newService(t)
-	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("edge-1")).Return(true, nil)
 	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
 
 	sessionID, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: "edge-1"})
@@ -80,24 +79,12 @@ func TestRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
 	}
 }
 
-func TestRequestConnectionRejectsUnknownEdge(t *testing.T) {
-	t.Parallel()
-
-	service, repo := newService(t)
-	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("missing")).Return(false, nil)
-
-	_, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: "missing"})
-	if !errors.Is(err, domain.ErrEdgeNotFound) {
-		t.Errorf("RequestConnection() error = %v, want %v", err, domain.ErrEdgeNotFound)
-	}
-}
-
 func TestRequestConnectionPropagatesRepositoryError(t *testing.T) {
 	t.Parallel()
 
 	service, repo := newService(t)
 	wantErr := errors.New("firestore unavailable")
-	repo.EXPECT().EdgeExists(gomock.Any(), domain.EdgeID("edge-1")).Return(false, wantErr)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID(""), wantErr)
 
 	_, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: "edge-1"})
 	if !errors.Is(err, wantErr) {

@@ -8,8 +8,6 @@ import (
 
 	gcpfirestore "cloud.google.com/go/firestore"
 	"google.golang.org/api/iterator"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 )
@@ -61,19 +59,6 @@ func (r *EdgeRepository) ListEdgesSeenAfter(ctx context.Context, cutoff time.Tim
 
 		edges = append(edges, domain.Edge{ID: domain.EdgeID(doc.Ref.ID), LastSeenAt: data.LastSeenAt})
 	}
-}
-
-func (r *EdgeRepository) EdgeExists(ctx context.Context, edgeID domain.EdgeID) (bool, error) {
-	_, err := r.client.Collection(edgesCollection).Doc(string(edgeID)).Get(ctx)
-	if status.Code(err) == codes.NotFound {
-		return false, nil
-	}
-
-	if err != nil {
-		return false, fmt.Errorf("get edge: %w", err)
-	}
-
-	return true, nil
 }
 
 func (r *EdgeRepository) CreateSession(ctx context.Context, edgeID domain.EdgeID) (domain.SessionID, error) {

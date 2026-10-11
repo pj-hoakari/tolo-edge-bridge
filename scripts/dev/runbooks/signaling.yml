@@ -78,11 +78,11 @@ steps:
             application/json:
               edgeId: ""
     test: current.res.status == 400 && current.res.body.code == "invalid_argument"
-  unknownEdge:
+  edgeWithoutPresence:
     bridge:
       /signaling.v1.SignalingService/RequestConnection:
         post:
           body:
             application/json:
               edgeId: edge-unknown
-    test: current.res.status == 404 && current.res.body.code == "not_found"
+    test: current.res.status == 200 && current.res.body.sessionId != ""

@@ -9,7 +9,6 @@ const AliveWindow = 30 * time.Second
 
 var (
 	ErrEdgeIDRequired = errors.New("edge id is required")
-	ErrEdgeNotFound   = errors.New("edge not found")
 )
 
 type EdgeID string
