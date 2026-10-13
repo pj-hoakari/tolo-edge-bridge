@@ -48,11 +48,29 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 - 失効確認（introspection）は行わず、TTL による自然失効に委ねる。シグナリングは管理系の書き込みではなく、発行するカスタムトークンも短命であるため
 - Realtime の Firestore 変更検知も同一方式のアクセス制御を使う（発行は Realtime。Realtime）
 
+## シグナリング文書とセキュリティルール（確定分）
+
+決定の根拠と、受容したリスクは ADR-0084 にある。
+
+- シグナリング文書は次のパスに置く。`tenantId`、`eventId`、`edgeDeviceId` は公開 ID である
+  `tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}/signals/{signalId}`
+- 待ち受け側（edge 役）はエッジ端末の観測ページの client、接続要求側（console 役）は管理 UI の client とする。本サービスは、検証した `client_id` を受理する client の設定と突き合わせて役割を決める
+- カスタムトークンのクレームは `tenant_id`、`event_id`、ピアの役割とする。`tenant_id` と `event_id` は `event_access` の値を写す。`edge_device_id` はクレームに含めない
+- セッション文書は、本サービスが接続要求を受け付けたときに作る（Admin SDK）。接続要求は console 役だけが行え、tenant と event はリクエストではなく `event_access` から取る
+- signals は、`from`（送り手の役割）、`payload`（SDP または ICE 候補）、`createdAt` を持つ文書として追記する
+- セキュリティルールは、パスの `tenantId` と `eventId` がクレームと一致することをすべての許可の条件とし、そのうえで次を許す。これ以外のパスと操作は拒否し、コレクショングループクエリも許可しない
+
+| 対象 | 読み取り | 作成 | 更新 | 削除 |
+|---|---|---|---|---|
+| sessions | edge 役、console 役 | なし（本サービスの Admin SDK のみ） | なし | console 役 |
+| signals | edge 役、console 役 | edge 役、console 役。`from` が自分の役割と一致し、フィールドが `from`、`payload`、`createdAt` に限られ、`createdAt` が書き込み時刻であること | なし | console 役 |
+
+- edge 役は同じイベントのどのエッジ端末のパスにも読み書きできる。`edge_device_id` は資格情報ではないため、同じイベント内での端末のなりすましは防がない。影響はそのイベントの範囲に閉じる
+
 ## 未策定の事項
 
-- シグナリング文書の構造
-- カスタムトークン発行の入出力（エンドポイントの形式と proto の要否）
-- セキュリティルールの詳細
+- カスタムトークン発行の入出力（エンドポイントの形式と proto の要否）、クレームの名前と TTL
+- 閉じられずに残ったセッションの片付け（TTL やサーバ側の削除）
 - STUN／TURN サーバの扱い（自前で持つか、マネージドを使うか）
 - 接続の同時数と有効期間の上限
 
@@ -60,4 +78,4 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 
 | イベント | 契機 |
 |---|---|
-| AccessRequested | 観測点起動時に、オーナー／スタッフが管理 UI から WebRTC でグラフ紐づけを行うための接続を要求する |
+| AccessRequested | 観測点起動時に、オーナー／スタッフが管理 UI から WebRTC でグラフ紐づけを行うための接続を要求する。本サービスが接続要求を受け付け、セッション文書を作った時点にあたる |
