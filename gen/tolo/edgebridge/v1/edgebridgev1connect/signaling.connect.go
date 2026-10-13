@@ -36,6 +36,9 @@ const (
 	// SignalingServiceRequestConnectionProcedure is the fully-qualified name of the SignalingService's
 	// RequestConnection RPC.
 	SignalingServiceRequestConnectionProcedure = "/tolo.edgebridge.v1.SignalingService/RequestConnection"
+	// SignalingServiceIssueFirestoreTokenProcedure is the fully-qualified name of the
+	// SignalingService's IssueFirestoreToken RPC.
+	SignalingServiceIssueFirestoreTokenProcedure = "/tolo.edgebridge.v1.SignalingService/IssueFirestoreToken"
 )
 
 // SignalingServiceClient is a client for the tolo.edgebridge.v1.SignalingService service.
@@ -43,6 +46,7 @@ type SignalingServiceClient interface {
 	// 指定した edge への接続を要求する。
 	// signaling は Firestore に接続セッションを作成して edge に通知し、session_id を返す。
 	RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error)
+	IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error)
 }
 
 // NewSignalingServiceClient constructs a client for the tolo.edgebridge.v1.SignalingService
@@ -62,12 +66,19 @@ func NewSignalingServiceClient(httpClient connect.HTTPClient, baseURL string, op
 			connect.WithSchema(signalingServiceMethods.ByName("RequestConnection")),
 			connect.WithClientOptions(opts...),
 		),
+		issueFirestoreToken: connect.NewClient[v1.IssueFirestoreTokenRequest, v1.IssueFirestoreTokenResponse](
+			httpClient,
+			baseURL+SignalingServiceIssueFirestoreTokenProcedure,
+			connect.WithSchema(signalingServiceMethods.ByName("IssueFirestoreToken")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // signalingServiceClient implements SignalingServiceClient.
 type signalingServiceClient struct {
-	requestConnection *connect.Client[v1.RequestConnectionRequest, v1.RequestConnectionResponse]
+	requestConnection   *connect.Client[v1.RequestConnectionRequest, v1.RequestConnectionResponse]
+	issueFirestoreToken *connect.Client[v1.IssueFirestoreTokenRequest, v1.IssueFirestoreTokenResponse]
 }
 
 // RequestConnection calls tolo.edgebridge.v1.SignalingService.RequestConnection.
@@ -75,11 +86,17 @@ func (c *signalingServiceClient) RequestConnection(ctx context.Context, req *con
 	return c.requestConnection.CallUnary(ctx, req)
 }
 
+// IssueFirestoreToken calls tolo.edgebridge.v1.SignalingService.IssueFirestoreToken.
+func (c *signalingServiceClient) IssueFirestoreToken(ctx context.Context, req *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error) {
+	return c.issueFirestoreToken.CallUnary(ctx, req)
+}
+
 // SignalingServiceHandler is an implementation of the tolo.edgebridge.v1.SignalingService service.
 type SignalingServiceHandler interface {
 	// 指定した edge への接続を要求する。
 	// signaling は Firestore に接続セッションを作成して edge に通知し、session_id を返す。
 	RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error)
+	IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error)
 }
 
 // NewSignalingServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -95,10 +112,18 @@ func NewSignalingServiceHandler(svc SignalingServiceHandler, opts ...connect.Han
 		connect.WithSchema(signalingServiceMethods.ByName("RequestConnection")),
 		connect.WithHandlerOptions(opts...),
 	)
+	signalingServiceIssueFirestoreTokenHandler := connect.NewUnaryHandler(
+		SignalingServiceIssueFirestoreTokenProcedure,
+		svc.IssueFirestoreToken,
+		connect.WithSchema(signalingServiceMethods.ByName("IssueFirestoreToken")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/tolo.edgebridge.v1.SignalingService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case SignalingServiceRequestConnectionProcedure:
 			signalingServiceRequestConnectionHandler.ServeHTTP(w, r)
+		case SignalingServiceIssueFirestoreTokenProcedure:
+			signalingServiceIssueFirestoreTokenHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -110,4 +135,8 @@ type UnimplementedSignalingServiceHandler struct{}
 
 func (UnimplementedSignalingServiceHandler) RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("tolo.edgebridge.v1.SignalingService.RequestConnection is not implemented"))
+}
+
+func (UnimplementedSignalingServiceHandler) IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("tolo.edgebridge.v1.SignalingService.IssueFirestoreToken is not implemented"))
 }

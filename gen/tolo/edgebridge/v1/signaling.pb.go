@@ -9,6 +9,7 @@ package edgebridgev1
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -111,18 +112,112 @@ func (x *RequestConnectionResponse) GetSessionId() string {
 	return ""
 }
 
+type IssueFirestoreTokenRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueFirestoreTokenRequest) Reset() {
+	*x = IssueFirestoreTokenRequest{}
+	mi := &file_tolo_edgebridge_v1_signaling_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueFirestoreTokenRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueFirestoreTokenRequest) ProtoMessage() {}
+
+func (x *IssueFirestoreTokenRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_tolo_edgebridge_v1_signaling_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueFirestoreTokenRequest.ProtoReflect.Descriptor instead.
+func (*IssueFirestoreTokenRequest) Descriptor() ([]byte, []int) {
+	return file_tolo_edgebridge_v1_signaling_proto_rawDescGZIP(), []int{2}
+}
+
+type IssueFirestoreTokenResponse struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	FirebaseCustomToken string                 `protobuf:"bytes,1,opt,name=firebase_custom_token,json=firebaseCustomToken,proto3" json:"firebase_custom_token,omitempty"`
+	ExpiresAt           *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *IssueFirestoreTokenResponse) Reset() {
+	*x = IssueFirestoreTokenResponse{}
+	mi := &file_tolo_edgebridge_v1_signaling_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueFirestoreTokenResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueFirestoreTokenResponse) ProtoMessage() {}
+
+func (x *IssueFirestoreTokenResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_tolo_edgebridge_v1_signaling_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueFirestoreTokenResponse.ProtoReflect.Descriptor instead.
+func (*IssueFirestoreTokenResponse) Descriptor() ([]byte, []int) {
+	return file_tolo_edgebridge_v1_signaling_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *IssueFirestoreTokenResponse) GetFirebaseCustomToken() string {
+	if x != nil {
+		return x.FirebaseCustomToken
+	}
+	return ""
+}
+
+func (x *IssueFirestoreTokenResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 var File_tolo_edgebridge_v1_signaling_proto protoreflect.FileDescriptor
 
 const file_tolo_edgebridge_v1_signaling_proto_rawDesc = "" +
 	"\n" +
-	"\"tolo/edgebridge/v1/signaling.proto\x12\x12tolo.edgebridge.v1\"@\n" +
+	"\"tolo/edgebridge/v1/signaling.proto\x12\x12tolo.edgebridge.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"@\n" +
 	"\x18RequestConnectionRequest\x12$\n" +
 	"\x0eedge_device_id\x18\x01 \x01(\tR\fedgeDeviceId\":\n" +
 	"\x19RequestConnectionResponse\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId2\x86\x01\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x1c\n" +
+	"\x1aIssueFirestoreTokenRequest\"\x8c\x01\n" +
+	"\x1bIssueFirestoreTokenResponse\x122\n" +
+	"\x15firebase_custom_token\x18\x01 \x01(\tR\x13firebaseCustomToken\x129\n" +
+	"\n" +
+	"expires_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt2\x80\x02\n" +
 	"\x10SignalingService\x12r\n" +
-	"\x11RequestConnection\x12,.tolo.edgebridge.v1.RequestConnectionRequest\x1a-.tolo.edgebridge.v1.RequestConnectionResponse\"\x00B\xde\x01\n" +
+	"\x11RequestConnection\x12,.tolo.edgebridge.v1.RequestConnectionRequest\x1a-.tolo.edgebridge.v1.RequestConnectionResponse\"\x00\x12x\n" +
+	"\x13IssueFirestoreToken\x12..tolo.edgebridge.v1.IssueFirestoreTokenRequest\x1a/.tolo.edgebridge.v1.IssueFirestoreTokenResponse\"\x00B\xde\x01\n" +
 	"\x16com.tolo.edgebridge.v1B\x0eSignalingProtoP\x01ZJgithub.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1;edgebridgev1\xa2\x02\x03TEX\xaa\x02\x12Tolo.Edgebridge.V1\xca\x02\x12Tolo\\Edgebridge\\V1\xe2\x02\x1eTolo\\Edgebridge\\V1\\GPBMetadata\xea\x02\x14Tolo::Edgebridge::V1b\x06proto3"
 
 var (
@@ -137,19 +232,25 @@ func file_tolo_edgebridge_v1_signaling_proto_rawDescGZIP() []byte {
 	return file_tolo_edgebridge_v1_signaling_proto_rawDescData
 }
 
-var file_tolo_edgebridge_v1_signaling_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_tolo_edgebridge_v1_signaling_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_tolo_edgebridge_v1_signaling_proto_goTypes = []any{
-	(*RequestConnectionRequest)(nil),  // 0: tolo.edgebridge.v1.RequestConnectionRequest
-	(*RequestConnectionResponse)(nil), // 1: tolo.edgebridge.v1.RequestConnectionResponse
+	(*RequestConnectionRequest)(nil),    // 0: tolo.edgebridge.v1.RequestConnectionRequest
+	(*RequestConnectionResponse)(nil),   // 1: tolo.edgebridge.v1.RequestConnectionResponse
+	(*IssueFirestoreTokenRequest)(nil),  // 2: tolo.edgebridge.v1.IssueFirestoreTokenRequest
+	(*IssueFirestoreTokenResponse)(nil), // 3: tolo.edgebridge.v1.IssueFirestoreTokenResponse
+	(*timestamppb.Timestamp)(nil),       // 4: google.protobuf.Timestamp
 }
 var file_tolo_edgebridge_v1_signaling_proto_depIdxs = []int32{
-	0, // 0: tolo.edgebridge.v1.SignalingService.RequestConnection:input_type -> tolo.edgebridge.v1.RequestConnectionRequest
-	1, // 1: tolo.edgebridge.v1.SignalingService.RequestConnection:output_type -> tolo.edgebridge.v1.RequestConnectionResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	4, // 0: tolo.edgebridge.v1.IssueFirestoreTokenResponse.expires_at:type_name -> google.protobuf.Timestamp
+	0, // 1: tolo.edgebridge.v1.SignalingService.RequestConnection:input_type -> tolo.edgebridge.v1.RequestConnectionRequest
+	2, // 2: tolo.edgebridge.v1.SignalingService.IssueFirestoreToken:input_type -> tolo.edgebridge.v1.IssueFirestoreTokenRequest
+	1, // 3: tolo.edgebridge.v1.SignalingService.RequestConnection:output_type -> tolo.edgebridge.v1.RequestConnectionResponse
+	3, // 4: tolo.edgebridge.v1.SignalingService.IssueFirestoreToken:output_type -> tolo.edgebridge.v1.IssueFirestoreTokenResponse
+	3, // [3:5] is the sub-list for method output_type
+	1, // [1:3] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_tolo_edgebridge_v1_signaling_proto_init() }
@@ -163,7 +264,7 @@ func file_tolo_edgebridge_v1_signaling_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tolo_edgebridge_v1_signaling_proto_rawDesc), len(file_tolo_edgebridge_v1_signaling_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
