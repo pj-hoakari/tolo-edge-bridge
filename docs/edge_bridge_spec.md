@@ -54,6 +54,8 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 - セキュリティルールがカスタムトークンのクレームと文書パスを突合し、シグナリング文書の読み書きを制限する
 - 直接検証は、本文をデコードする前の HTTP middleware で、全 RPC に共通して行う。確認する項目: `iss`（IdP）、`aud`（バックエンド API 全体の論理 audience。例 backend-api。Service Gateway が検証する値と同じで、audience はバックエンド API 全体の論理識別子として扱い、本サービス専用の audience は追加しない）、`exp`／`nbf`（clock skew 許容 ±30 秒）、`token_use = event_access`、`tenant_id` と `event_id`（`event_access` が持つこと。リクエストに対象イベントを含めないため、突き合わせる値はない）、scope（`events.report` または `events.read` を受理する）、`client_id`（発行先 client。受理する client の登録と完全一致すること。受理するのは管理 UI の client とエッジ端末の観測ページの client に限り、未登録の client は scope が足りていても拒否する）。JWKS はキャッシュし、未知の `kid` は即時再取得する（レート制限付き。Service Gateway の規約と同じ）
 - `event_access` が鍵束縛（`cnf`（`jkt`））を持つ場合は、DPoP proof も検証する。検証項目は Service Gateway の規約と同じ（proof の署名、トークンの `cnf` と proof の公開鍵の一致、アクセストークンのハッシュの一致、HTTP メソッドと対象 URI の一致、発行時刻の許容窓、proof 識別子の再生防止）。対象 URI は、設定した公開 URL と RPC のパスから組み立て、任意の Host ヘッダと転送ヘッダは信頼しない。エッジ端末の観測ページは public client であり、発行されるトークンは鍵束縛を持つ
+- 観測ページは、`event_access` と DPoP proof を付けて本サービスをブラウザから直接呼ぶ。Web サーバを中継させない。管理 UI は BFF を経由して呼ぶ（ADR-0086）
+- 本サービスは CORS に応じる。許可するオリジンは設定として完全一致で持ち、観測ページの配信元に限る。プリフライト要求には認証なしで応答し、CORS 応答の許可を業務 RPC の認証成功として扱わない。資格情報付きの要求（`Access-Control-Allow-Credentials`）は許可しない
 - 役割（edge 役、console 役）の判定も middleware で行う。`RequestConnection` は console 役だけに許可する
 - 失効確認（introspection）は行わず、TTL による自然失効に委ねる。シグナリングは管理系の書き込みではなく、発行するカスタムトークンも短命であるため
 - Realtime の Firestore 変更検知も同一方式のアクセス制御を使う（発行は Realtime。Realtime）
