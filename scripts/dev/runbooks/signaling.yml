@@ -21,11 +21,11 @@ steps:
     test: current.res.status == 200
   requestConnection:
     bridge:
-      /signaling.v1.SignalingService/RequestConnection:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
         post:
           body:
             application/json:
-              edgeId: edge-1
+              edgeDeviceId: edge-1
     test: current.res.status == 200 && current.res.body.sessionId != ""
   session:
     firestore:
@@ -39,9 +39,9 @@ steps:
       && "timestampValue" in current.res.body.fields.createdAt
   emptyEdgeId:
     bridge:
-      /signaling.v1.SignalingService/RequestConnection:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
         post:
           body:
             application/json:
-              edgeId: ""
+              edgeDeviceId: ""
     test: current.res.status == 400 && current.res.body.code == "invalid_argument"
