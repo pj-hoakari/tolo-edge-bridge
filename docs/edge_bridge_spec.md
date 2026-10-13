@@ -35,8 +35,8 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 
 | 入出力 | 説明（ユビキタス言語） | 相手 | 認可 | 関連ドメインイベント |
 |---|---|---|---|---|
-| RequestConnection | 指定したエッジ端末への接続を要求する。セッション文書を作り、`session_id` を返す。tenant と event は `event_access` から取る | 管理 UI | `event_access` + events.read、console 役 | AccessRequested |
-| IssueFirestoreToken | シグナリング文書を読み書きするための Firebase Auth カスタムトークンを発行する。tenant と event は `event_access` から取る | 管理 UI、エッジ端末の観測ページ | `event_access` + events.read または events.report、edge 役または console 役 | （発行のみ） |
+| RequestConnection | 指定したエッジ端末への接続を要求する。セッション文書を作り、`session_id` を返す。tenant と event は `event_access` から取る | 管理 UI（BFF 経由） | `event_access` + events.read、console 役 | AccessRequested |
+| IssueFirestoreToken | シグナリング文書を読み書きするための Firebase Auth カスタムトークンを発行する。tenant と event は `event_access` から取る | 管理 UI、エッジ端末の観測ページ（いずれも BFF 経由） | `event_access` + events.read または events.report、edge 役または console 役 | （発行のみ） |
 
 ## ピアの識別（確定分）
 
@@ -53,9 +53,8 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 - 本サービスが `event_access` を直接検証し（IdP の JWKS を参照する。Service Gateway 以外で唯一の参照先）、Firebase Auth のカスタムトークン（`event_id` 等をクレームに含む短命のもの）を発行する
 - セキュリティルールがカスタムトークンのクレームと文書パスを突合し、シグナリング文書の読み書きを制限する
 - 直接検証は、本文をデコードする前の HTTP middleware で、全 RPC に共通して行う。確認する項目: `iss`（IdP）、`aud`（バックエンド API 全体の論理 audience。例 backend-api。Service Gateway が検証する値と同じで、audience はバックエンド API 全体の論理識別子として扱い、本サービス専用の audience は追加しない）、`exp`／`nbf`（clock skew 許容 ±30 秒）、`token_use = event_access`、`tenant_id` と `event_id`（`event_access` が持つこと。リクエストに対象イベントを含めないため、突き合わせる値はない）、scope（`events.report` または `events.read` を受理する）、`client_id`（発行先 client。受理する client の登録と完全一致すること。受理するのは管理 UI の client とエッジ端末の観測ページの client に限り、未登録の client は scope が足りていても拒否する）。JWKS はキャッシュし、未知の `kid` は即時再取得する（レート制限付き。Service Gateway の規約と同じ）
-- `event_access` が鍵束縛（`cnf`（`jkt`））を持つ場合は、DPoP proof も検証する。検証項目は Service Gateway の規約と同じ（proof の署名、トークンの `cnf` と proof の公開鍵の一致、アクセストークンのハッシュの一致、HTTP メソッドと対象 URI の一致、発行時刻の許容窓、proof 識別子の再生防止）。対象 URI は、設定した公開 URL と RPC のパスから組み立て、任意の Host ヘッダと転送ヘッダは信頼しない。エッジ端末の観測ページは public client であり、発行されるトークンは鍵束縛を持つ
-- 観測ページは、`event_access` と DPoP proof を付けて本サービスをブラウザから直接呼ぶ。Web サーバを中継させない。管理 UI は BFF を経由して呼ぶ（ADR-0086）
-- 本サービスは CORS に応じる。許可するオリジンは設定として完全一致で持ち、観測ページの配信元に限る。プリフライト要求には認証なしで応答し、CORS 応答の許可を業務 RPC の認証成功として扱わない。資格情報付きの要求（`Access-Control-Allow-Credentials`）は許可しない
+- 受理する client（管理 UI と観測ページ）は、どちらも BFF の背後の confidential client であり、発行されるトークンは鍵束縛を持たない。`event_access` が鍵束縛（`cnf`（`jkt`））を持つ場合は拒否する。DPoP proof は検証しない（ADR-0087）
+- 管理 UI と観測ページは、どちらも BFF を経由して本サービスを呼ぶ。ブラウザからは直接呼ばない。本サービスは CORS を設けない（ADR-0087）
 - 役割（edge 役、console 役）の判定も middleware で行う。`RequestConnection` は console 役だけに許可する
 - 失効確認（introspection）は行わず、TTL による自然失効に委ねる。シグナリングは管理系の書き込みではなく、発行するカスタムトークンも短命であるため
 - Realtime の Firestore 変更検知も同一方式のアクセス制御を使う（発行は Realtime。Realtime）
@@ -81,8 +80,7 @@ Service Gateway と同じ Connect エラーコードで返す。外部レスポ�
 
 | 事象 | Connect エラーコード |
 |---|---|
-| トークンがない、または無効、期限切れ。`token_use` の不一致。`tenant_id` か `event_id` がない | unauthenticated |
-| DPoP proof の欠落、無効、再生、または鍵の不一致（`cnf` を持つトークンのみ） | unauthenticated |
+| トークンがない、または無効、期限切れ。`token_use` の不一致。`tenant_id` か `event_id` がない。鍵束縛（`cnf`）を持つ | unauthenticated |
 | `client_id` が受理する client にない。scope が足りない。役割が RPC に許可されない | permission_denied |
 | JWKS を取得できない（未知の `kid` の再取得を控えている間を含む） | unavailable |
 | `RequestConnection` の `edge_device_id` が空 | invalid_argument |
