@@ -8,8 +8,8 @@ import (
 
 	connectrpc "connectrpc.com/connect"
 
-	signalingv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1"
-	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
+	edgebridgev1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 )
@@ -43,20 +43,20 @@ func InternalError(ctx context.Context, err error) *connectrpc.Error {
 }
 
 type Service struct {
-	signalingv1connect.UnimplementedSignalingServiceHandler
+	edgebridgev1connect.UnimplementedSignalingServiceHandler
 	signaling *application.SignalingService
 }
 
 func NewService(signaling *application.SignalingService) *Service {
 	return &Service{
-		UnimplementedSignalingServiceHandler: signalingv1connect.UnimplementedSignalingServiceHandler{},
+		UnimplementedSignalingServiceHandler: edgebridgev1connect.UnimplementedSignalingServiceHandler{},
 		signaling:                            signaling,
 	}
 }
 
-func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[signalingv1.RequestConnectionRequest]) (*connectrpc.Response[signalingv1.RequestConnectionResponse], error) {
+func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[edgebridgev1.RequestConnectionRequest]) (*connectrpc.Response[edgebridgev1.RequestConnectionResponse], error) {
 	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
-		EdgeID: req.Msg.GetEdgeId(),
+		EdgeID: req.Msg.GetEdgeDeviceId(),
 	})
 	if err != nil {
 		switch {
@@ -67,5 +67,5 @@ func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request
 		}
 	}
 
-	return connectrpc.NewResponse(&signalingv1.RequestConnectionResponse{SessionId: string(sessionID)}), nil
+	return connectrpc.NewResponse(&edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}), nil
 }

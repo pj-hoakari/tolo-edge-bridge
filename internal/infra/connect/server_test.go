@@ -10,8 +10,8 @@ import (
 	connectrpc "connectrpc.com/connect"
 	"go.uber.org/mock/gomock"
 
-	signalingv1 "github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1"
-	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
+	edgebridgev1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application/applicationmock"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
@@ -51,9 +51,9 @@ func TestRoutesServeRequestConnection(t *testing.T) {
 	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
 
 	server := newTestServer(t, repo)
-	client := signalingv1connect.NewSignalingServiceClient(server.Client(), server.URL)
+	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
 
-	res, err := client.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: "edge-1"}))
+	res, err := client.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"}))
 	if err != nil {
 		t.Fatalf("RequestConnection() error = %v", err)
 	}
@@ -68,7 +68,7 @@ func TestServiceRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
 
 	service := NewService(newSignalingService(newTestRepository(t)))
 
-	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: ""}))
+	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: ""}))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
 		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
 	}
@@ -81,7 +81,7 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
 	service := NewService(newSignalingService(repo))
 
-	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&signalingv1.RequestConnectionRequest{EdgeId: "edge-1"}))
+	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"}))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
 	}

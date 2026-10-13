@@ -7,7 +7,7 @@ import (
 	connectrpc "connectrpc.com/connect"
 	"connectrpc.com/otelconnect"
 
-	"github.com/pj-hoakari/tolo-edge-bridge/gen/signaling/v1/signalingv1connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 )
 
@@ -19,7 +19,7 @@ func Routes(signaling *application.SignalingService) (func(mux *http.ServeMux), 
 
 	service := NewService(signaling)
 	interceptors := connectrpc.WithInterceptors(tracing)
-	signalingPath, signalingHandler := signalingv1connect.NewSignalingServiceHandler(service, interceptors)
+	signalingPath, signalingHandler := edgebridgev1connect.NewSignalingServiceHandler(service, interceptors)
 
 	return func(mux *http.ServeMux) {
 		mux.Handle(signalingPath, signalingHandler)

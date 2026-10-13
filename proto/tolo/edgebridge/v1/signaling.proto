@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package signaling.v1;
+package tolo.edgebridge.v1;
 
 // management からの接続要求を受け、Firestore を通じて edge に通知する（シグナリング開始）。
 // SDP/ICE の交換自体は edge と management が Firestore 上のセッションを介して行うため、
@@ -13,7 +13,7 @@ service SignalingService {
 
 message RequestConnectionRequest {
   // 接続先 edge の ID。
-  string edge_id = 1;
+  string edge_device_id = 1;
 }
 
 message RequestConnectionResponse {
