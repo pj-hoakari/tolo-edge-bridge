@@ -14,6 +14,7 @@ import (
 	gcpfirestore "cloud.google.com/go/firestore"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/externaltoken"
 	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect/authn"
@@ -181,9 +182,9 @@ func newAuthenticator() (*authn.Authenticator, error) {
 		return nil, fmt.Errorf("build the external token verifier: %w", err)
 	}
 
-	authenticator, err := authn.New(verifier, map[string]authn.Role{
-		values[envConsoleClientID]: authn.RoleConsole,
-		values[envEdgeClientID]:    authn.RoleEdge,
+	authenticator, err := authn.New(verifier, map[string]domain.PeerRole{
+		values[envConsoleClientID]: domain.PeerRoleConsole,
+		values[envEdgeClientID]:    domain.PeerRoleEdge,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build the authenticator: %w", err)

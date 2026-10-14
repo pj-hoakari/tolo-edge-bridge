@@ -201,7 +201,7 @@ func newTestServer(t *testing.T, repo application.EdgeRepository, idp *testIdP) 
 		t.Fatalf("NewVerifier() error = %v", err)
 	}
 
-	authenticator, err := authn.New(verifier, map[string]authn.Role{consoleClientID: authn.RoleConsole, edgeClientID: authn.RoleEdge})
+	authenticator, err := authn.New(verifier, map[string]domain.PeerRole{consoleClientID: domain.PeerRoleConsole, edgeClientID: domain.PeerRoleEdge})
 	if err != nil {
 		t.Fatalf("authn.New() error = %v", err)
 	}
@@ -457,7 +457,7 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID(testTenantID), domain.EventID(testEventID), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
 	service := NewService(newSignalingService(repo))
 
-	ctx := authn.NewContext(context.Background(), authn.Principal{ClientID: consoleClientID, Role: authn.RoleConsole, TenantID: testTenantID, EventID: testEventID})
+	ctx := authn.NewContext(context.Background(), authn.Principal{ClientID: consoleClientID, Role: domain.PeerRoleConsole, TenantID: testTenantID, EventID: testEventID})
 
 	_, err := service.RequestConnection(ctx, newRequest("", "edge-1"))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
