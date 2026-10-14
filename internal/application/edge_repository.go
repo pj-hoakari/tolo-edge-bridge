@@ -9,5 +9,5 @@ import (
 //go:generate go tool mockgen -source=edge_repository.go -destination=applicationmock/edge_repository.go -package=applicationmock
 
 type EdgeRepository interface {
-	CreateSession(ctx context.Context, edgeID domain.EdgeID) (domain.SessionID, error)
+	CreateSession(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID) (domain.SessionID, error)
 }

@@ -11,8 +11,10 @@ import (
 )
 
 const (
-	edgesCollection        = "edges"
-	sessionsSubcollection  = "sessions"
+	tenantsCollection      = "tenants"
+	eventsCollection       = "events"
+	edgeDevicesCollection  = "edgeDevices"
+	sessionsCollection     = "sessions"
 	sessionStatusRequested = "requested"
 )
 
@@ -29,8 +31,11 @@ func NewEdgeRepository(client *gcpfirestore.Client) *EdgeRepository {
 	return &EdgeRepository{client: client}
 }
 
-func (r *EdgeRepository) CreateSession(ctx context.Context, edgeID domain.EdgeID) (domain.SessionID, error) {
-	ref := r.client.Collection(edgesCollection).Doc(string(edgeID)).Collection(sessionsSubcollection).NewDoc()
+func (r *EdgeRepository) CreateSession(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID) (domain.SessionID, error) {
+	ref := r.client.Collection(tenantsCollection).Doc(string(tenantID)).
+		Collection(eventsCollection).Doc(string(eventID)).
+		Collection(edgeDevicesCollection).Doc(string(edgeID)).
+		Collection(sessionsCollection).NewDoc()
 
 	if _, err := ref.Set(ctx, sessionDoc{Status: sessionStatusRequested, CreatedAt: time.Time{}}); err != nil {
 		return "", fmt.Errorf("create session: %w", err)

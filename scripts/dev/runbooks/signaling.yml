@@ -23,13 +23,16 @@ steps:
     bridge:
       /tolo.edgebridge.v1.SignalingService/RequestConnection:
         post:
+          headers:
+            X-Tolo-Tenant-Id: tenant-1
+            X-Tolo-Event-Id: event-1
           body:
             application/json:
               edgeDeviceId: edge-1
     test: current.res.status == 200 && current.res.body.sessionId != ""
   session:
     firestore:
-      "{{ vars.documents }}/edges/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+      "{{ vars.documents }}/tenants/tenant-1/events/event-1/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
         get:
           headers:
             Authorization: Bearer owner
@@ -41,7 +44,18 @@ steps:
     bridge:
       /tolo.edgebridge.v1.SignalingService/RequestConnection:
         post:
+          headers:
+            X-Tolo-Tenant-Id: tenant-1
+            X-Tolo-Event-Id: event-1
           body:
             application/json:
               edgeDeviceId: ""
     test: current.res.status == 400 && current.res.body.code == "invalid_argument"
+  missingTenantAndEvent:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          body:
+            application/json:
+              edgeDeviceId: edge-1
+    test: current.res.status == 401 && current.res.body.code == "unauthenticated"
