@@ -11,6 +11,17 @@ services:
             timeout: 2s
             retries: 60
 
+    fakeidp:
+        build:
+            context: https://github.com/pj-hoakari/tolo-service-gateway.git#a61f55d8f1124a09839711cbc7d960ddf59f9456
+            target: fakeidp
+        environment:
+            SERVER_ADDR: :8080
+            FAKE_IDP_ISSUER: http://fakeidp:8080
+            FAKE_IDP_AUDIENCE: backend-api
+        ports:
+            - "8082:8080"
+
     server:
         build:
             context: .
@@ -18,11 +29,18 @@ services:
             SERVER_ADDR: :8080
             FIRESTORE_PROJECT_ID: demo-tolo
             FIRESTORE_EMULATOR_HOST: firebase-emulator:8080
+            IDP_ISSUER: http://fakeidp:8080
+            IDP_AUDIENCE: backend-api
+            IDP_JWKS_URL: http://fakeidp:8080/oauth2/jwks
+            CONSOLE_CLIENT_ID: console-ui
+            EDGE_CLIENT_ID: edge-page
         ports:
             - "8080:8080"
         depends_on:
             firebase-emulator:
                 condition: service_healthy
+            fakeidp:
+                condition: service_started
 
     runn:
         image: ghcr.io/k1low/runn:v1.11.1@sha256:0c71b25001b3d9acc506f8c69ffd0b1d11625127474fcf13ff7bad2d5a0ccd95
