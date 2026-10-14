@@ -39,7 +39,8 @@ task up:build
 `fakeidp`（`http://localhost:8082`）は tolo-service-gateway の開発専用の偽 IdP で、`POST /token` の本文をそのまま claim にした `event_access` を検証なしで発行する。compose は tolo-service-gateway の git リポジトリをビルドコンテキストにして、コミットを固定した `fakeidp` ターゲットをビルドする  
 `server` は `IDP_JWKS_URL=http://fakeidp:8080/oauth2/jwks` でこの偽 IdP の鍵を参照し、`console-ui` を console 役、`edge-page` を edge 役の client として受理する  
 `server` は `FIREBASE_AUTH_EMULATOR_HOST=firebase-emulator:9099` で compose 内の Firebase Auth エミュレータを使い、カスタムトークンを署名なしで発行する  
-エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Firebase Auth を `localhost:9099`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている
+エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Firebase Auth を `localhost:9099`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている  
+シグナリング文書のセキュリティルールは `firebase-emulator/firestore.rules` にあり、同じディレクトリの `firebase.json` が参照する。Firestore エミュレータはこのルールを読み込んで適用するので、`Authorization: Bearer owner`（Admin SDK 相当）以外の要求はルールに従う
 
 ### シナリオテスト（runn）
 
@@ -60,6 +61,8 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 - 空の `edge_id` は `invalid_argument` になる
 - edge 役と console 役の `event_access` を付けた `IssueFirestoreToken` がカスタムトークンを返し、Auth エミュレータの `signInWithCustomToken` でサインインできる。サインインしたユーザーの uid はトークンの `sub` で、カスタムクレームに `tenant_id`、`event_id`、`peer_role`、`expires_at` を持ち、`expires_at` はレスポンスの `expires_at` と同じ時刻を指す
 - トークンがない `IssueFirestoreToken` は `unauthenticated`、受理しない `client_id` のトークンは `permission_denied` になる
+- サインインで得た ID トークンを Firestore エミュレータの REST API に付けて、セキュリティルールを確かめる。edge 役と console 役は自分のセッションと signals を読め、signals は `from` が自分の役割で、フィールドが `from`、`payload`、`createdAt` だけで、`createdAt` がサーバー時刻（`REQUEST_TIME`）のときだけ作れる。`from` の不一致、余分なフィールド、クライアントが決めた `createdAt`、signals の更新、セッションの作成と更新、edge 役による削除、別の tenant や event のパス、トークンなし、`expires_at` を過ぎたトークン、コレクショングループクエリは拒否され、console 役はセッションと signals を削除できる
+- `expires_at` を過ぎたトークンはサーバーが発行しないので、runbook が edge 役の ID トークンの claim を写して `expires_at` を過去にした署名なし（`alg: none`）の JWT を作り、エミュレータに渡す
 
 ### 環境変数
 
