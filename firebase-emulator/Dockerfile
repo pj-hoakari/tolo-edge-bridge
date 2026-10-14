@@ -19,6 +19,6 @@ COPY firebase.json ./
 RUN firebase setup:emulators:firestore \
  && firebase setup:emulators:ui
 
-EXPOSE 4000 4400 4500 8080
+EXPOSE 4000 4400 4500 8080 9099
 
 CMD ["firebase", "emulators:start", "--project", "demo-tolo"]

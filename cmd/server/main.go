@@ -12,11 +12,15 @@ import (
 	"time"
 
 	gcpfirestore "cloud.google.com/go/firestore"
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/auth"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/externaltoken"
 	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect/authn"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/firebaseauth"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/firestore"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/httpapi"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/logging"
@@ -94,7 +98,14 @@ func run() error {
 
 	slog.Info("firestore configured", "project", firestoreProjectID, "emulator_host", os.Getenv("FIRESTORE_EMULATOR_HOST"))
 
-	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient))
+	authClient, err := newFirebaseAuthClient(ctx, firestoreProjectID)
+	if err != nil {
+		return err
+	}
+
+	slog.Info("firebase auth configured", "project", firestoreProjectID, "emulator_host", os.Getenv("FIREBASE_AUTH_EMULATOR_HOST"))
+
+	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient), firebaseauth.NewTokenMinter(authClient))
 
 	signalingRoutes, err := connectinfra.Routes(signalingService, authenticator)
 	if err != nil {
@@ -140,6 +151,26 @@ func run() error {
 	}
 }
 
+func newFirebaseAuthClient(ctx context.Context, projectID string) (*auth.Client, error) {
+	app, err := firebase.NewApp(ctx, &firebase.Config{
+		AuthOverride:     nil,
+		DatabaseURL:      "",
+		ProjectID:        projectID,
+		ServiceAccountID: "",
+		StorageBucket:    "",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create firebase app: %w", err)
+	}
+
+	client, err := app.Auth(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create firebase auth client: %w", err)
+	}
+
+	return client, nil
+}
+
 func newAuthenticator() (*authn.Authenticator, error) {
 	values := make(map[string]string)
 
@@ -181,9 +212,9 @@ func newAuthenticator() (*authn.Authenticator, error) {
 		return nil, fmt.Errorf("build the external token verifier: %w", err)
 	}
 
-	authenticator, err := authn.New(verifier, map[string]authn.Role{
-		values[envConsoleClientID]: authn.RoleConsole,
-		values[envEdgeClientID]:    authn.RoleEdge,
+	authenticator, err := authn.New(verifier, map[string]domain.PeerRole{
+		values[envConsoleClientID]: domain.PeerRoleConsole,
+		values[envEdgeClientID]:    domain.PeerRoleEdge,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build the authenticator: %w", err)

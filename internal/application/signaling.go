@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 )
@@ -13,12 +14,40 @@ type RequestConnectionInput struct {
 	EdgeID   string
 }
 
-type SignalingService struct {
-	edges EdgeRepository
+type IssueFirestoreTokenInput struct {
+	Subject   string
+	TenantID  string
+	EventID   string
+	Role      domain.PeerRole
+	ExpiresAt time.Time
 }
 
-func NewSignalingService(edges EdgeRepository) *SignalingService {
-	return &SignalingService{edges: edges}
+type FirestoreToken struct {
+	Token     string
+	ExpiresAt time.Time
+}
+
+type SignalingService struct {
+	edges  EdgeRepository
+	tokens FirestoreTokenMinter
+}
+
+func NewSignalingService(edges EdgeRepository, tokens FirestoreTokenMinter) *SignalingService {
+	return &SignalingService{edges: edges, tokens: tokens}
+}
+
+func (s *SignalingService) IssueFirestoreToken(ctx context.Context, input IssueFirestoreTokenInput) (FirestoreToken, error) {
+	access, err := domain.NewFirestoreAccess(input.Subject, domain.TenantID(input.TenantID), domain.EventID(input.EventID), input.Role, input.ExpiresAt)
+	if err != nil {
+		return FirestoreToken{}, err
+	}
+
+	token, err := s.tokens.Mint(ctx, access)
+	if err != nil {
+		return FirestoreToken{}, fmt.Errorf("mint firestore token for %s role: %w", access.Role, err)
+	}
+
+	return FirestoreToken{Token: token, ExpiresAt: access.ExpiresAt}, nil
 }
 
 func (s *SignalingService) RequestConnection(ctx context.Context, input RequestConnectionInput) (domain.SessionID, error) {

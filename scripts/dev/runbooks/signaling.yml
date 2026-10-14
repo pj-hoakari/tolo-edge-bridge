@@ -1,8 +1,9 @@
-desc: fakeidp の event_access で RequestConnection の認証・認可と Firestore への書き込みを確かめる
+desc: fakeidp の event_access で RequestConnection と IssueFirestoreToken の認証・認可、Firestore への書き込み、カスタムトークンでのサインインを確かめる
 runners:
   bridge: http://server:8080
   idp: http://fakeidp:8080
   firestore: http://firebase-emulator:8080
+  auth: http://firebase-emulator:9099
 vars:
   documents: /v1/projects/demo-tolo/databases/(default)/documents
   tenantId: 0123456789abcdef
@@ -128,3 +129,79 @@ steps:
             application/json:
               edgeDeviceId: ""
     test: current.res.status == 400 && current.res.body.code == "invalid_argument"
+  issueEdgeToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.edgeToken.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  signInEdge:
+    auth:
+      /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
+        post:
+          body:
+            application/json:
+              token: "{{ steps.issueEdgeToken.res.body.firebaseCustomToken }}"
+              returnSecureToken: true
+    test: current.res.status == 200 && current.res.body.idToken != ""
+    bind:
+      edgeIDTokenPayload: replace(replace(split(current.res.body.idToken, ".")[1], "-", "+"), "_", "/")
+  edgeIDTokenClaims:
+    bind:
+      edgeClaims: fromJSON(fromBase64(edgeIDTokenPayload + repeat("=", (4 - len(edgeIDTokenPayload) % 4) % 4)))
+  edgeIDToken:
+    test: |
+      edgeClaims.sub == "user-edge"
+      && edgeClaims.tenant_id == vars.tenantId
+      && edgeClaims.event_id == vars.eventId
+      && edgeClaims.peer_role == "edge"
+      && edgeClaims.expires_at == date(steps.issueEdgeToken.res.body.expiresAt).Unix()
+  issueConsoleToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  signInConsole:
+    auth:
+      /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
+        post:
+          body:
+            application/json:
+              token: "{{ steps.issueConsoleToken.res.body.firebaseCustomToken }}"
+              returnSecureToken: true
+    test: current.res.status == 200 && current.res.body.idToken != ""
+    bind:
+      consoleIDTokenPayload: replace(replace(split(current.res.body.idToken, ".")[1], "-", "+"), "_", "/")
+  consoleIDTokenClaims:
+    bind:
+      consoleClaims: fromJSON(fromBase64(consoleIDTokenPayload + repeat("=", (4 - len(consoleIDTokenPayload) % 4) % 4)))
+  consoleIDToken:
+    test: |
+      consoleClaims.sub == "user-console"
+      && consoleClaims.tenant_id == vars.tenantId
+      && consoleClaims.event_id == vars.eventId
+      && consoleClaims.peer_role == "console"
+      && consoleClaims.expires_at == date(steps.issueConsoleToken.res.body.expiresAt).Unix()
+  issueTokenWithoutToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          body:
+            application/json: {}
+    test: current.res.status == 401 && current.res.body.code == "unauthenticated"
+  issueTokenUnknownClient:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.unknownClientToken.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"

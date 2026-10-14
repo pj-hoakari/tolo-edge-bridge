@@ -8,10 +8,12 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/externaltoken"
 )
 
@@ -20,18 +22,11 @@ const (
 	bearerScheme        = "bearer"
 )
 
-type Role string
-
-const (
-	RoleEdge    Role = "edge"
-	RoleConsole Role = "console"
-)
-
 var acceptedScopes = []string{"events.read", "events.report"}
 
-var procedures = map[string][]Role{
-	edgebridgev1connect.SignalingServiceRequestConnectionProcedure:   {RoleConsole},
-	edgebridgev1connect.SignalingServiceIssueFirestoreTokenProcedure: {RoleEdge, RoleConsole},
+var procedures = map[string][]domain.PeerRole{
+	edgebridgev1connect.SignalingServiceRequestConnectionProcedure:   {domain.PeerRoleConsole},
+	edgebridgev1connect.SignalingServiceIssueFirestoreTokenProcedure: {domain.PeerRoleEdge, domain.PeerRoleConsole},
 }
 
 var (
@@ -51,10 +46,12 @@ var (
 )
 
 type Principal struct {
-	ClientID string
-	Role     Role
-	TenantID string
-	EventID  string
+	Subject   string
+	ClientID  string
+	Role      domain.PeerRole
+	TenantID  string
+	EventID   string
+	ExpiresAt time.Time
 }
 
 type Verifier interface {
@@ -63,11 +60,11 @@ type Verifier interface {
 
 type Authenticator struct {
 	verifier    Verifier
-	clients     map[string]Role
+	clients     map[string]domain.PeerRole
 	errorWriter *connectrpc.ErrorWriter
 }
 
-func New(verifier Verifier, clients map[string]Role) (*Authenticator, error) {
+func New(verifier Verifier, clients map[string]domain.PeerRole) (*Authenticator, error) {
 	if verifier == nil {
 		return nil, ErrMissingVerifier
 	}
@@ -135,10 +132,12 @@ func (a *Authenticator) authenticate(ctx context.Context, header http.Header, pr
 	}
 
 	return Principal{
-		ClientID: claims.ClientID,
-		Role:     role,
-		TenantID: claims.TenantID,
-		EventID:  claims.EventID,
+		Subject:   claims.Subject,
+		ClientID:  claims.ClientID,
+		Role:      role,
+		TenantID:  claims.TenantID,
+		EventID:   claims.EventID,
+		ExpiresAt: claims.ExpiresAt,
 	}, nil
 }
 

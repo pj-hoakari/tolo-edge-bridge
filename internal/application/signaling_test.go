@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.uber.org/mock/gomock"
 
@@ -17,7 +18,96 @@ func newService(t *testing.T) (*application.SignalingService, *applicationmock.M
 
 	repo := applicationmock.NewMockEdgeRepository(gomock.NewController(t))
 
-	return application.NewSignalingService(repo), repo
+	return application.NewSignalingService(repo, nil), repo
+}
+
+func newTokenService(t *testing.T) (*application.SignalingService, *applicationmock.MockFirestoreTokenMinter) {
+	t.Helper()
+
+	minter := applicationmock.NewMockFirestoreTokenMinter(gomock.NewController(t))
+
+	return application.NewSignalingService(nil, minter), minter
+}
+
+func validTokenInput() application.IssueFirestoreTokenInput {
+	return application.IssueFirestoreTokenInput{
+		Subject:   "user-1",
+		TenantID:  "tenant-1",
+		EventID:   "event-1",
+		Role:      domain.PeerRoleEdge,
+		ExpiresAt: time.Date(2026, time.October, 14, 12, 5, 0, 750_000_000, time.FixedZone("JST", 9*60*60)),
+	}
+}
+
+func TestIssueFirestoreToken(t *testing.T) {
+	t.Parallel()
+
+	service, minter := newTokenService(t)
+	wantAccess := domain.FirestoreAccess{
+		Subject:   "user-1",
+		TenantID:  "tenant-1",
+		EventID:   "event-1",
+		Role:      domain.PeerRoleEdge,
+		ExpiresAt: time.Date(2026, time.October, 14, 3, 5, 0, 0, time.UTC),
+	}
+	minter.EXPECT().Mint(gomock.Any(), wantAccess).Return("custom-token", nil)
+
+	token, err := service.IssueFirestoreToken(context.Background(), validTokenInput())
+	if err != nil {
+		t.Fatalf("IssueFirestoreToken() error = %v", err)
+	}
+
+	if want := "custom-token"; token.Token != want {
+		t.Errorf("Token = %q, want %q", token.Token, want)
+	}
+
+	if !token.ExpiresAt.Equal(wantAccess.ExpiresAt) {
+		t.Errorf("ExpiresAt = %v, want %v", token.ExpiresAt, wantAccess.ExpiresAt)
+	}
+}
+
+func TestIssueFirestoreTokenRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mutate  func(input *application.IssueFirestoreTokenInput)
+		wantErr error
+	}{
+		{name: "subject", mutate: func(i *application.IssueFirestoreTokenInput) { i.Subject = "" }, wantErr: domain.ErrSubjectRequired},
+		{name: "tenant", mutate: func(i *application.IssueFirestoreTokenInput) { i.TenantID = "" }, wantErr: domain.ErrTenantIDRequired},
+		{name: "event", mutate: func(i *application.IssueFirestoreTokenInput) { i.EventID = "" }, wantErr: domain.ErrEventIDRequired},
+		{name: "role", mutate: func(i *application.IssueFirestoreTokenInput) { i.Role = "admin" }, wantErr: domain.ErrPeerRoleInvalid},
+		{name: "expiry", mutate: func(i *application.IssueFirestoreTokenInput) { i.ExpiresAt = time.Time{} }, wantErr: domain.ErrExpiresAtRequired},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, _ := newTokenService(t)
+			input := validTokenInput()
+			tt.mutate(&input)
+
+			_, err := service.IssueFirestoreToken(context.Background(), input)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("IssueFirestoreToken() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestIssueFirestoreTokenPropagatesMinterError(t *testing.T) {
+	t.Parallel()
+
+	service, minter := newTokenService(t)
+	wantErr := errors.New("signer unavailable")
+	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).Return("", wantErr)
+
+	_, err := service.IssueFirestoreToken(context.Background(), validTokenInput())
+	if !errors.Is(err, wantErr) {
+		t.Errorf("IssueFirestoreToken() error = %v, want %v", err, wantErr)
+	}
 }
 
 func TestRequestConnection(t *testing.T) {
