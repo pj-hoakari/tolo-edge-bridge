@@ -38,7 +38,8 @@ task up:build
 `server` は `FIRESTORE_EMULATOR_HOST=firebase-emulator:8080` で compose 内の Firestore エミュレータ（プロジェクト `demo-tolo`）に接続する  
 `fakeidp`（`http://localhost:8082`）は tolo-service-gateway の開発専用の偽 IdP で、`POST /token` の本文をそのまま claim にした `event_access` を検証なしで発行する。compose は tolo-service-gateway の git リポジトリをビルドコンテキストにして、コミットを固定した `fakeidp` ターゲットをビルドする  
 `server` は `IDP_JWKS_URL=http://fakeidp:8080/oauth2/jwks` でこの偽 IdP の鍵を参照し、`console-ui` を console 役、`edge-page` を edge 役の client として受理する  
-エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている
+`server` は `FIREBASE_AUTH_EMULATOR_HOST=firebase-emulator:9099` で compose 内の Firebase Auth エミュレータを使い、カスタムトークンを署名なしで発行する  
+エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Firebase Auth を `localhost:9099`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている
 
 ### シナリオテスト（runn）
 
@@ -57,14 +58,17 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 - edge 役のトークンでの `RequestConnection` は `permission_denied` になる
 - 受理しない `client_id` のトークンは `permission_denied` になる
 - 空の `edge_id` は `invalid_argument` になる
+- edge 役と console 役の `event_access` を付けた `IssueFirestoreToken` がカスタムトークンを返し、Auth エミュレータの `signInWithCustomToken` でサインインできる。サインインしたユーザーの uid はトークンの `sub` で、カスタムクレームに `tenant_id`、`event_id`、`peer_role`、`expires_at` を持ち、`expires_at` はレスポンスの `expires_at` と同じ時刻を指す
+- トークンがない `IssueFirestoreToken` は `unauthenticated`、受理しない `client_id` のトークンは `permission_denied` になる
 
 ### 環境変数
 
 | 環境変数 | デフォルト | 内容 |
 | --- | --- | --- |
 | `SERVER_ADDR` | `:8080` | 待ち受けるアドレス |
-| `FIRESTORE_PROJECT_ID` | なし（必須） | 接続する Firestore の GCP プロジェクト ID。未設定ならサーバーは起動しない |
+| `FIRESTORE_PROJECT_ID` | なし（必須） | 接続する Firestore の GCP プロジェクト ID。Firebase Auth のカスタムトークンも同じプロジェクトで発行する。未設定ならサーバーは起動しない |
 | `FIRESTORE_EMULATOR_HOST` | なし | 設定すると Firestore クライアントが本番ではなくそのホストのエミュレータに接続する（クライアントライブラリの標準の挙動）。本番では設定しない |
+| `FIREBASE_AUTH_EMULATOR_HOST` | なし | 設定すると Firebase Admin SDK がそのホストの Auth エミュレータ向けに、署名なし（`alg: none`）のカスタムトークンを発行する（SDK の標準の挙動）。本番では設定しない |
 | `IDP_ISSUER` | なし（必須） | `event_access` に要求する `iss`。未設定ならサーバーは起動しない |
 | `IDP_AUDIENCE` | なし（必須） | `event_access` に要求する `aud`（バックエンド API 全体の論理 audience。例 `backend-api`。Service Gateway と同じ値） |
 | `IDP_JWKS_URL` | なし（必須） | IdP の JWKS の絶対 HTTP URL。鍵は 5 分キャッシュし、未知の `kid` は 30 秒に 1 回まで即時に再取得する |
@@ -78,7 +82,8 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 ヘッダ・TLS・タイムアウトなどその他の `OTEL_EXPORTER_OTLP_*` は exporter がそのまま解釈する  
 ログは標準出力へ 1 行 1 件の JSON で書き出す  
 Firestore の認証はクライアントライブラリの Application Default Credentials に従う  
-全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
+カスタムトークンの署名も Application Default Credentials に従う。サービスアカウントの鍵ファイルがない環境（Cloud Run など）では Admin SDK が IAM の `signBlob` で署名するため、実行サービスアカウントに `roles/iam.serviceAccountTokenCreator` が必要になる。認証情報がなければサーバーは起動しない  
+全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。`IssueFirestoreToken` は edge 役と console 役が呼べ、`event_access` の `sub` を uid、`tenant_id`、`event_id`、役割（`peer_role`）、`exp`（`expires_at`、UNIX 秒）をカスタムクレームに持つ Firebase Auth のカスタムトークンを返す。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
 
 ### トレースの確認（Jaeger）
 

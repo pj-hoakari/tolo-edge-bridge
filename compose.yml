@@ -4,6 +4,7 @@ services:
             context: ./firebase-emulator
         ports:
             - "8081:8080"
+            - "9099:9099"
             - "4000:4000"
         healthcheck:
             test: ["CMD", "wget", "-qO-", "http://localhost:8080/"]
@@ -29,6 +30,7 @@ services:
             SERVER_ADDR: :8080
             FIRESTORE_PROJECT_ID: demo-tolo
             FIRESTORE_EMULATOR_HOST: firebase-emulator:8080
+            FIREBASE_AUTH_EMULATOR_HOST: firebase-emulator:9099
             IDP_ISSUER: http://fakeidp:8080
             IDP_AUDIENCE: backend-api
             IDP_JWKS_URL: http://fakeidp:8080/oauth2/jwks
