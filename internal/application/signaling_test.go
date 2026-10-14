@@ -24,9 +24,9 @@ func TestRequestConnection(t *testing.T) {
 	t.Parallel()
 
 	service, repo := newService(t)
-	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
 
-	sessionID, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: "edge-1"})
+	sessionID, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{TenantID: "tenant-1", EventID: "event-1", EdgeID: "edge-1"})
 	if err != nil {
 		t.Fatalf("RequestConnection() error = %v", err)
 	}
@@ -36,14 +36,42 @@ func TestRequestConnection(t *testing.T) {
 	}
 }
 
-func TestRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
+func TestRequestConnectionRejectsMissingIDs(t *testing.T) {
 	t.Parallel()
 
-	service, _ := newService(t)
+	tests := []struct {
+		name    string
+		input   application.RequestConnectionInput
+		wantErr error
+	}{
+		{
+			name:    "tenant",
+			input:   application.RequestConnectionInput{TenantID: "", EventID: "event-1", EdgeID: "edge-1"},
+			wantErr: domain.ErrTenantIDRequired,
+		},
+		{
+			name:    "event",
+			input:   application.RequestConnectionInput{TenantID: "tenant-1", EventID: "", EdgeID: "edge-1"},
+			wantErr: domain.ErrEventIDRequired,
+		},
+		{
+			name:    "edge",
+			input:   application.RequestConnectionInput{TenantID: "tenant-1", EventID: "event-1", EdgeID: ""},
+			wantErr: domain.ErrEdgeIDRequired,
+		},
+	}
 
-	_, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: ""})
-	if !errors.Is(err, domain.ErrEdgeIDRequired) {
-		t.Errorf("RequestConnection() error = %v, want %v", err, domain.ErrEdgeIDRequired)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			service, _ := newService(t)
+
+			_, err := service.RequestConnection(context.Background(), tt.input)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("RequestConnection() error = %v, want %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 
@@ -52,9 +80,9 @@ func TestRequestConnectionPropagatesRepositoryError(t *testing.T) {
 
 	service, repo := newService(t)
 	wantErr := errors.New("firestore unavailable")
-	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID(""), wantErr)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID(""), wantErr)
 
-	_, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{EdgeID: "edge-1"})
+	_, err := service.RequestConnection(context.Background(), application.RequestConnectionInput{TenantID: "tenant-1", EventID: "event-1", EdgeID: "edge-1"})
 	if !errors.Is(err, wantErr) {
 		t.Errorf("RequestConnection() error = %v, want %v", err, wantErr)
 	}

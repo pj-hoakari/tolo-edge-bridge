@@ -42,16 +42,16 @@ func (m *MockEdgeRepository) EXPECT() *MockEdgeRepositoryMockRecorder {
 }
 
 // CreateSession mocks base method.
-func (m *MockEdgeRepository) CreateSession(ctx context.Context, edgeID domain.EdgeID) (domain.SessionID, error) {
+func (m *MockEdgeRepository) CreateSession(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID) (domain.SessionID, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CreateSession", ctx, edgeID)
+	ret := m.ctrl.Call(m, "CreateSession", ctx, tenantID, eventID, edgeID)
 	ret0, _ := ret[0].(domain.SessionID)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // CreateSession indicates an expected call of CreateSession.
-func (mr *MockEdgeRepositoryMockRecorder) CreateSession(ctx, edgeID any) *gomock.Call {
+func (mr *MockEdgeRepositoryMockRecorder) CreateSession(ctx, tenantID, eventID, edgeID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSession", reflect.TypeOf((*MockEdgeRepository)(nil).CreateSession), ctx, edgeID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSession", reflect.TypeOf((*MockEdgeRepository)(nil).CreateSession), ctx, tenantID, eventID, edgeID)
 }

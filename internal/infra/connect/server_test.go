@@ -44,16 +44,24 @@ func newTestServer(t *testing.T, repo application.EdgeRepository) *httptest.Serv
 	return server
 }
 
+func newRequest(tenantID, eventID, edgeID string) *connectrpc.Request[edgebridgev1.RequestConnectionRequest] {
+	req := connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: edgeID})
+	req.Header().Set(tenantIDHeader, tenantID)
+	req.Header().Set(eventIDHeader, eventID)
+
+	return req
+}
+
 func TestRoutesServeRequestConnection(t *testing.T) {
 	t.Parallel()
 
 	repo := newTestRepository(t)
-	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
 
 	server := newTestServer(t, repo)
 	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
 
-	res, err := client.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"}))
+	res, err := client.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", "edge-1"))
 	if err != nil {
 		t.Fatalf("RequestConnection() error = %v", err)
 	}
@@ -68,9 +76,36 @@ func TestServiceRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
 
 	service := NewService(newSignalingService(newTestRepository(t)))
 
-	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: ""}))
+	_, err := service.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", ""))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
 		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
+	}
+}
+
+func TestRoutesRejectMissingTenantOrEvent(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		tenantID string
+		eventID  string
+	}{
+		{name: "tenant", tenantID: "", eventID: "event-1"},
+		{name: "event", tenantID: "tenant-1", eventID: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			server := newTestServer(t, newTestRepository(t))
+			client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+
+			_, err := client.RequestConnection(context.Background(), newRequest(tt.tenantID, tt.eventID, "edge-1"))
+			if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
+				t.Errorf("RequestConnection() error code = %v, want %v", got, want)
+			}
+		})
 	}
 }
 
@@ -78,10 +113,10 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 	captureLog(t)
 
 	repo := newTestRepository(t)
-	repo.EXPECT().CreateSession(gomock.Any(), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
 	service := NewService(newSignalingService(repo))
 
-	_, err := service.RequestConnection(context.Background(), connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"}))
+	_, err := service.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", "edge-1"))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
 	}

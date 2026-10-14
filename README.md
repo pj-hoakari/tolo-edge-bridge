@@ -50,8 +50,9 @@ task runn
 `task runn` は compose を起動してから `docker compose run --rm -T runn` を実行する  
 runbook はエミュレータのデータを消してから、次を確かめる
 
-- `RequestConnection` が session ID を返し、`edges/{edgeId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
+- `RequestConnection` が session ID を返し、`tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
 - 空の `edge_id` は `invalid_argument` になる
+- `X-Tolo-Tenant-Id` と `X-Tolo-Event-Id` ヘッダがない要求は `unauthenticated` になる
 
 ### 環境変数
 
