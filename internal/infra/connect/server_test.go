@@ -167,11 +167,23 @@ func newTestRepository(t *testing.T) *applicationmock.MockEdgeRepository {
 	return applicationmock.NewMockEdgeRepository(gomock.NewController(t))
 }
 
+func newTestMinter(t *testing.T) *applicationmock.MockFirestoreTokenMinter {
+	t.Helper()
+
+	return applicationmock.NewMockFirestoreTokenMinter(gomock.NewController(t))
+}
+
 func newSignalingService(repo application.EdgeRepository) *application.SignalingService {
-	return application.NewSignalingService(repo)
+	return application.NewSignalingService(repo, nil)
 }
 
 func newTestServer(t *testing.T, repo application.EdgeRepository, idp *testIdP) *httptest.Server {
+	t.Helper()
+
+	return newTestServerWith(t, newSignalingService(repo), idp)
+}
+
+func newTestServerWith(t *testing.T, service *application.SignalingService, idp *testIdP) *httptest.Server {
 	t.Helper()
 
 	keys, err := externaltoken.NewKeySet(externaltoken.KeySetConfig{
@@ -206,7 +218,7 @@ func newTestServer(t *testing.T, repo application.EdgeRepository, idp *testIdP) 
 		t.Fatalf("authn.New() error = %v", err)
 	}
 
-	routes, err := Routes(newSignalingService(repo), authenticator)
+	routes, err := Routes(service, authenticator)
 	if err != nil {
 		t.Fatalf("Routes() error = %v", err)
 	}
@@ -447,6 +459,106 @@ func TestServiceWithoutPrincipalIsUnauthenticated(t *testing.T) {
 	_, err := service.RequestConnection(context.Background(), newRequest("", "edge-1"))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
 		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
+	}
+
+	_, err = service.IssueFirestoreToken(context.Background(), connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
+		t.Fatalf("IssueFirestoreToken() error code = %v, want %v", got, want)
+	}
+}
+
+func issueFirestoreToken(t *testing.T, server *httptest.Server, token string) (*connectrpc.Response[edgebridgev1.IssueFirestoreTokenResponse], error) {
+	t.Helper()
+
+	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+
+	req := connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{})
+	if token != "" {
+		req.Header().Set("Authorization", "Bearer "+token)
+	}
+
+	return client.IssueFirestoreToken(context.Background(), req)
+}
+
+func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		clientID string
+		role     domain.PeerRole
+	}{
+		{name: "edge", clientID: edgeClientID, role: domain.PeerRoleEdge},
+		{name: "console", clientID: consoleClientID, role: domain.PeerRoleConsole},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			idp := newTestIdP(t)
+			wantExpiresAt := idp.clock().Add(5 * time.Minute)
+
+			var minted domain.FirestoreAccess
+
+			minter := newTestMinter(t)
+			minter.EXPECT().Mint(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, access domain.FirestoreAccess) (string, error) {
+				minted = access
+
+				return "custom-token", nil
+			})
+
+			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), minter), idp)
+
+			res, err := issueFirestoreToken(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = tt.clientID; c["sub"] = "user-" + tt.name }))
+			if err != nil {
+				t.Fatalf("IssueFirestoreToken() error = %v", err)
+			}
+
+			if got, want := res.Msg.GetFirebaseCustomToken(), "custom-token"; got != want {
+				t.Errorf("FirebaseCustomToken = %q, want %q", got, want)
+			}
+
+			if got := res.Msg.GetExpiresAt().AsTime(); !got.Equal(wantExpiresAt) {
+				t.Errorf("ExpiresAt = %v, want %v", got, wantExpiresAt)
+			}
+
+			want := domain.FirestoreAccess{Subject: "user-" + tt.name, TenantID: testTenantID, EventID: testEventID, Role: tt.role, ExpiresAt: wantExpiresAt}
+			if minted.Subject != want.Subject || minted.TenantID != want.TenantID || minted.EventID != want.EventID || minted.Role != want.Role || !minted.ExpiresAt.Equal(want.ExpiresAt) {
+				t.Errorf("minted access = %+v, want %+v", minted, want)
+			}
+		})
+	}
+}
+
+func TestRoutesRejectIssueFirestoreTokenWithoutToken(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), newTestMinter(t)), idp)
+
+	_, err := issueFirestoreToken(t, server, "")
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
+		t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
+	}
+}
+
+func TestServiceMinterFailureIsInternal(t *testing.T) {
+	captureLog(t)
+
+	minter := newTestMinter(t)
+	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).Return("", errors.New("signBlob denied"))
+	service := NewService(application.NewSignalingService(newTestRepository(t), minter))
+
+	ctx := authn.NewContext(context.Background(), authn.Principal{Subject: "user-1", ClientID: edgeClientID, Role: domain.PeerRoleEdge, TenantID: testTenantID, EventID: testEventID, ExpiresAt: time.Now()})
+
+	_, err := service.IssueFirestoreToken(ctx, connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{}))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
+		t.Errorf("IssueFirestoreToken() error code = %v, want %v", got, want)
+	}
+
+	if strings.Contains(err.Error(), "signBlob") {
+		t.Errorf("error = %q, want it to omit the underlying failure", err)
 	}
 }
 

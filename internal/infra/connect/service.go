@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	connectrpc "connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	edgebridgev1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
 	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
@@ -75,4 +76,29 @@ func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request
 	}
 
 	return connectrpc.NewResponse(&edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}), nil
+}
+
+func (s *Service) IssueFirestoreToken(ctx context.Context, _ *connectrpc.Request[edgebridgev1.IssueFirestoreTokenRequest]) (*connectrpc.Response[edgebridgev1.IssueFirestoreTokenResponse], error) {
+	principal, _ := authn.FromContext(ctx)
+
+	token, err := s.signaling.IssueFirestoreToken(ctx, application.IssueFirestoreTokenInput{
+		Subject:   principal.Subject,
+		TenantID:  principal.TenantID,
+		EventID:   principal.EventID,
+		Role:      principal.Role,
+		ExpiresAt: principal.ExpiresAt,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrSubjectRequired), errors.Is(err, domain.ErrTenantIDRequired), errors.Is(err, domain.ErrEventIDRequired), errors.Is(err, domain.ErrPeerRoleInvalid), errors.Is(err, domain.ErrExpiresAtRequired):
+			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err)
+		default:
+			return nil, InternalError(ctx, err)
+		}
+	}
+
+	return connectrpc.NewResponse(&edgebridgev1.IssueFirestoreTokenResponse{
+		FirebaseCustomToken: token.Token,
+		ExpiresAt:           timestamppb.New(token.ExpiresAt),
+	}), nil
 }
