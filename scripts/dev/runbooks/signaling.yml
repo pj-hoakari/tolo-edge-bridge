@@ -1,4 +1,4 @@
-desc: fakeidp の event_access で RequestConnection と IssueFirestoreToken の認証・認可、Firestore への書き込み、カスタムトークンでのサインインを確かめる
+desc: fakeidp の event_access で RequestConnection と IssueFirestoreToken の認証・認可、Firestore への書き込み、カスタムトークンでのサインイン、セキュリティルールを確かめる
 runners:
   bridge: http://server:8080
   idp: http://fakeidp:8080
@@ -205,3 +205,319 @@ steps:
           body:
             application/json: {}
     test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  sessionRefs:
+    bind:
+      sessionURL: vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/edge-1/sessions/" + steps.requestConnection.res.body.sessionId
+      sessionName: trimPrefix(vars.documents, "/v1/") + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/edge-1/sessions/" + steps.requestConnection.res.body.sessionId
+      edgeIDToken: steps.signInEdge.res.body.idToken
+      consoleIDToken: steps.signInConsole.res.body.idToken
+      expiredIDToken: |
+        "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"expires_at": 1}))), "+", "-"), "/", "_"), "=") + "."
+  sessionReadEdge:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadConsole:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionsListEdge:
+    firestore:
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions":
+        get:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 200 && len(current.res.body.documents) == 1
+  sessionReadNoAuth:
+    firestore:
+      "{{ sessionURL }}":
+        get: {}
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadExpired:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ expiredIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadOtherTenant:
+    firestore:
+      "{{ vars.documents }}/tenants/other-tenant/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadOtherEvent:
+    firestore:
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/other-event/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionCreateConsole:
+    firestore:
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions/client-made":
+        patch:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              fields:
+                status:
+                  stringValue: requested
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionUpdateConsole:
+    firestore:
+      "{{ sessionURL }}?updateMask.fieldPaths=status&currentDocument.exists=true":
+        patch:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              fields:
+                status:
+                  stringValue: accepted
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateEdge:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/edge-offer"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 200
+  signalCreateConsole:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/console-answer"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: answer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 200
+  signalReadAdmin:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: Bearer owner
+    test: |
+      current.res.status == 200
+      && current.res.body.fields.from.stringValue == "edge"
+      && current.res.body.fields.payload.mapValue.fields.type.stringValue == "offer"
+      && "timestampValue" in current.res.body.fields.createdAt
+      && len(current.res.body.fields) == 3
+  signalCreateWrongFrom:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/edge-as-console"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateManagementFrom:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/console-as-management"
+                    fields:
+                      from:
+                        stringValue: management
+                      payload:
+                        stringValue: answer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateExtraField:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/edge-extra"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        stringValue: offer
+                      extra:
+                        stringValue: x
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateClientTime:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/edge-client-time"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        stringValue: offer
+                      createdAt:
+                        timestampValue: "2026-01-01T00:00:00Z"
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateMissingCreatedAt:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/edge-no-time"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        stringValue: offer
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalUpdateConsole:
+    firestore:
+      "{{ sessionURL }}/signals/console-answer?updateMask.fieldPaths=payload&currentDocument.exists=true":
+        patch:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              fields:
+                payload:
+                  stringValue: changed
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalsListEdge:
+    firestore:
+      "{{ sessionURL }}/signals":
+        get:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 200 && len(current.res.body.documents) == 2
+  signalsCollectionGroupConsole:
+    firestore:
+      "{{ vars.documents }}:runQuery":
+        post:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              structuredQuery:
+                from:
+                  - collectionId: signals
+                    allDescendants: true
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalDeleteEdge:
+    firestore:
+      "{{ sessionURL }}/signals/console-answer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalDeleteConsole:
+    firestore:
+      "{{ sessionURL }}/signals/console-answer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 200
+  sessionDeleteEdge:
+    firestore:
+      "{{ sessionURL }}":
+        delete:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionDeleteConsole:
+    firestore:
+      "{{ sessionURL }}":
+        delete:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 200
+  sessionGoneAdmin:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: Bearer owner
+    test: current.res.status == 404
