@@ -12,11 +12,7 @@ import (
 	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
-)
-
-const (
-	tenantIDHeader = "X-Tolo-Tenant-Id"
-	eventIDHeader  = "X-Tolo-Event-Id"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect/authn"
 )
 
 // errInternal is the only detail a client learns about an internal failure.
@@ -60,9 +56,11 @@ func NewService(signaling *application.SignalingService) *Service {
 }
 
 func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[edgebridgev1.RequestConnectionRequest]) (*connectrpc.Response[edgebridgev1.RequestConnectionResponse], error) {
+	principal, _ := authn.FromContext(ctx)
+
 	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
-		TenantID: req.Header().Get(tenantIDHeader),
-		EventID:  req.Header().Get(eventIDHeader),
+		TenantID: principal.TenantID,
+		EventID:  principal.EventID,
 		EdgeID:   req.Msg.GetEdgeDeviceId(),
 	})
 	if err != nil {

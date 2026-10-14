@@ -2,12 +2,23 @@ package connect
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	connectrpc "connectrpc.com/connect"
+	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/mock/gomock"
 
 	edgebridgev1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
@@ -15,7 +26,140 @@ import (
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application/applicationmock"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/externaltoken"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect/authn"
 )
+
+const (
+	testIssuer      = "https://idp.example.test"
+	testAudience    = "backend-api"
+	consoleClientID = "console-ui"
+	edgeClientID    = "edge-page"
+	testTenantID    = "0123456789abcdef"
+	testEventID     = "fedcba9876543210"
+)
+
+type testIdP struct {
+	server *httptest.Server
+	status atomic.Int32
+	fetch  atomic.Int32
+
+	mu  sync.Mutex
+	key *rsa.PrivateKey
+	kid string
+	now time.Time
+}
+
+func newTestIdP(t *testing.T) *testIdP {
+	t.Helper()
+
+	idp := &testIdP{
+		server: nil,
+		status: atomic.Int32{},
+		fetch:  atomic.Int32{},
+		mu:     sync.Mutex{},
+		key:    nil,
+		kid:    "",
+		now:    time.Date(2026, time.October, 14, 12, 0, 0, 0, time.UTC),
+	}
+	idp.status.Store(http.StatusOK)
+	idp.rotate(t, "kid-1")
+
+	idp.server = httptest.NewServer(http.HandlerFunc(idp.serveJWKS))
+	t.Cleanup(idp.server.Close)
+
+	return idp
+}
+
+func (i *testIdP) rotate(t *testing.T, kid string) {
+	t.Helper()
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.key = key
+	i.kid = kid
+}
+
+func (i *testIdP) advance(d time.Duration) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.now = i.now.Add(d)
+}
+
+func (i *testIdP) clock() time.Time {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	return i.now
+}
+
+func (i *testIdP) serveJWKS(w http.ResponseWriter, _ *http.Request) {
+	i.fetch.Add(1)
+
+	if status := int(i.status.Load()); status != http.StatusOK {
+		w.WriteHeader(status)
+
+		return
+	}
+
+	i.mu.Lock()
+	public := i.key.PublicKey
+	kid := i.kid
+	i.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{
+		"kty": "RSA",
+		"kid": kid,
+		"use": "sig",
+		"n":   base64.RawURLEncoding.EncodeToString(public.N.Bytes()),
+		"e":   base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes()),
+	}}})
+}
+
+func (i *testIdP) token(t *testing.T, mutate func(claims jwt.MapClaims)) string {
+	t.Helper()
+
+	now := i.clock()
+	claims := jwt.MapClaims{
+		"iss":       testIssuer,
+		"aud":       testAudience,
+		"sub":       "user-1",
+		"client_id": consoleClientID,
+		"token_use": externaltoken.TokenUseEventAccess,
+		"scope":     "events.read",
+		"jti":       "jti-1",
+		"tenant_id": testTenantID,
+		"event_id":  testEventID,
+		"iat":       now.Unix(),
+		"nbf":       now.Unix(),
+		"exp":       now.Add(5 * time.Minute).Unix(),
+	}
+
+	if mutate != nil {
+		mutate(claims)
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = i.kid
+
+	signed, err := token.SignedString(i.key)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+
+	return signed
+}
 
 func newTestRepository(t *testing.T) *applicationmock.MockEdgeRepository {
 	t.Helper()
@@ -27,10 +171,42 @@ func newSignalingService(repo application.EdgeRepository) *application.Signaling
 	return application.NewSignalingService(repo)
 }
 
-func newTestServer(t *testing.T, repo application.EdgeRepository) *httptest.Server {
+func newTestServer(t *testing.T, repo application.EdgeRepository, idp *testIdP) *httptest.Server {
 	t.Helper()
 
-	routes, err := Routes(newSignalingService(repo))
+	keys, err := externaltoken.NewKeySet(externaltoken.KeySetConfig{
+		URL:             idp.server.URL + "/jwks",
+		HTTPClient:      idp.server.Client(),
+		CacheTTL:        0,
+		RefreshCooldown: 0,
+		FailureCooldown: 0,
+		FetchTimeout:    0,
+		RetryBackoff:    []time.Duration{},
+		MaxDocumentSize: 0,
+		Clock:           idp.clock,
+	})
+	if err != nil {
+		t.Fatalf("NewKeySet() error = %v", err)
+	}
+
+	verifier, err := externaltoken.NewVerifier(externaltoken.Config{
+		Issuer:     testIssuer,
+		Audience:   testAudience,
+		Algorithms: nil,
+		Keys:       keys,
+		Leeway:     0,
+		Clock:      idp.clock,
+	})
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
+	}
+
+	authenticator, err := authn.New(verifier, map[string]authn.Role{consoleClientID: authn.RoleConsole, edgeClientID: authn.RoleEdge})
+	if err != nil {
+		t.Fatalf("authn.New() error = %v", err)
+	}
+
+	routes, err := Routes(newSignalingService(repo), authenticator)
 	if err != nil {
 		t.Fatalf("Routes() error = %v", err)
 	}
@@ -44,24 +220,33 @@ func newTestServer(t *testing.T, repo application.EdgeRepository) *httptest.Serv
 	return server
 }
 
-func newRequest(tenantID, eventID, edgeID string) *connectrpc.Request[edgebridgev1.RequestConnectionRequest] {
+func newRequest(token, edgeID string) *connectrpc.Request[edgebridgev1.RequestConnectionRequest] {
 	req := connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: edgeID})
-	req.Header().Set(tenantIDHeader, tenantID)
-	req.Header().Set(eventIDHeader, eventID)
+	if token != "" {
+		req.Header().Set("Authorization", "Bearer "+token)
+	}
 
 	return req
 }
 
-func TestRoutesServeRequestConnection(t *testing.T) {
+func requestConnection(t *testing.T, server *httptest.Server, token string) (*connectrpc.Response[edgebridgev1.RequestConnectionResponse], error) {
+	t.Helper()
+
+	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+
+	return client.RequestConnection(context.Background(), newRequest(token, "edge-1"))
+}
+
+func TestRoutesServeRequestConnectionForConsoleToken(t *testing.T) {
 	t.Parallel()
 
 	repo := newTestRepository(t)
-	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID(testTenantID), domain.EventID(testEventID), domain.EdgeID("edge-1")).Return(domain.SessionID("sess-1"), nil)
 
-	server := newTestServer(t, repo)
-	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+	idp := newTestIdP(t)
+	server := newTestServer(t, repo, idp)
 
-	res, err := client.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", "edge-1"))
+	res, err := requestConnection(t, server, idp.token(t, nil))
 	if err != nil {
 		t.Fatalf("RequestConnection() error = %v", err)
 	}
@@ -71,41 +256,197 @@ func TestRoutesServeRequestConnection(t *testing.T) {
 	}
 }
 
-func TestServiceRequestConnectionRejectsEmptyEdgeID(t *testing.T) {
-	t.Parallel()
-
-	service := NewService(newSignalingService(newTestRepository(t)))
-
-	_, err := service.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", ""))
-	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
-		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
-	}
-}
-
-func TestRoutesRejectMissingTenantOrEvent(t *testing.T) {
+func TestRoutesRejectTokens(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		tenantID string
-		eventID  string
+		name   string
+		mutate func(claims jwt.MapClaims)
+		want   connectrpc.Code
 	}{
-		{name: "tenant", tenantID: "", eventID: "event-1"},
-		{name: "event", tenantID: "tenant-1", eventID: ""},
+		{name: "expired", mutate: func(c jwt.MapClaims) { c["exp"] = c["iat"].(int64) - 60 }, want: connectrpc.CodeUnauthenticated},
+		{name: "not yet valid", mutate: func(c jwt.MapClaims) { c["nbf"] = c["iat"].(int64) + 60 }, want: connectrpc.CodeUnauthenticated},
+		{name: "wrong issuer", mutate: func(c jwt.MapClaims) { c["iss"] = "https://other.example.test" }, want: connectrpc.CodeUnauthenticated},
+		{name: "wrong audience", mutate: func(c jwt.MapClaims) { c["aud"] = "other-api" }, want: connectrpc.CodeUnauthenticated},
+		{name: "wrong token use", mutate: func(c jwt.MapClaims) { c["token_use"] = "tenant_access" }, want: connectrpc.CodeUnauthenticated},
+		{name: "missing tenant id", mutate: func(c jwt.MapClaims) { delete(c, "tenant_id") }, want: connectrpc.CodeUnauthenticated},
+		{name: "missing event id", mutate: func(c jwt.MapClaims) { delete(c, "event_id") }, want: connectrpc.CodeUnauthenticated},
+		{name: "key bound", mutate: func(c jwt.MapClaims) { c["cnf"] = map[string]any{"jkt": "thumbprint"} }, want: connectrpc.CodeUnauthenticated},
+		{name: "unknown client", mutate: func(c jwt.MapClaims) { c["client_id"] = "other-client" }, want: connectrpc.CodePermissionDenied},
+		{name: "missing scope", mutate: func(c jwt.MapClaims) { c["scope"] = "events.manage" }, want: connectrpc.CodePermissionDenied},
+		{name: "edge role", mutate: func(c jwt.MapClaims) { c["client_id"] = edgeClientID }, want: connectrpc.CodePermissionDenied},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			server := newTestServer(t, newTestRepository(t))
-			client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+			idp := newTestIdP(t)
+			server := newTestServer(t, newTestRepository(t), idp)
 
-			_, err := client.RequestConnection(context.Background(), newRequest(tt.tenantID, tt.eventID, "edge-1"))
-			if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
-				t.Errorf("RequestConnection() error code = %v, want %v", got, want)
+			_, err := requestConnection(t, server, idp.token(t, tt.mutate))
+			if got := connectrpc.CodeOf(err); got != tt.want {
+				t.Fatalf("RequestConnection() error code = %v, want %v (%v)", got, tt.want, err)
+			}
+
+			var connectErr *connectrpc.Error
+			if errors.As(err, &connectErr) {
+				for _, secret := range []string{testTenantID, testEventID, consoleClientID, edgeClientID, "other-client"} {
+					if strings.Contains(connectErr.Message(), secret) {
+						t.Errorf("error message %q leaks %q", connectErr.Message(), secret)
+					}
+				}
 			}
 		})
+	}
+}
+
+func TestRoutesAcceptEventsReportScope(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepository(t)
+	repo.EXPECT().CreateSession(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(domain.SessionID("sess-1"), nil)
+
+	idp := newTestIdP(t)
+	server := newTestServer(t, repo, idp)
+
+	if _, err := requestConnection(t, server, idp.token(t, func(c jwt.MapClaims) { c["scope"] = "events.report" })); err != nil {
+		t.Fatalf("RequestConnection() error = %v", err)
+	}
+}
+
+func TestRoutesRejectMissingTokenBeforeDecoding(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	server := newTestServer(t, newTestRepository(t), idp)
+
+	res, err := server.Client().Post(server.URL+edgebridgev1connect.SignalingServiceRequestConnectionProcedure, "application/json", strings.NewReader("not json"))
+	if err != nil {
+		t.Fatalf("Post() error = %v", err)
+	}
+
+	defer res.Body.Close()
+
+	if got, want := res.StatusCode, http.StatusUnauthorized; got != want {
+		t.Errorf("status = %d, want %d", got, want)
+	}
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+
+	var decoded struct {
+		Code string `json:"code"`
+	}
+
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("Unmarshal(%q) error = %v", body, err)
+	}
+
+	if got, want := decoded.Code, "unauthenticated"; got != want {
+		t.Errorf("code = %q, want %q", got, want)
+	}
+
+	if got := idp.fetch.Load(); got != 0 {
+		t.Errorf("JWKS fetched %d times, want 0", got)
+	}
+}
+
+func TestRoutesRefetchJWKSForUnknownKid(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepository(t)
+	repo.EXPECT().CreateSession(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(domain.SessionID("sess-1"), nil).Times(2)
+
+	idp := newTestIdP(t)
+	server := newTestServer(t, repo, idp)
+
+	if _, err := requestConnection(t, server, idp.token(t, nil)); err != nil {
+		t.Fatalf("RequestConnection() with the first key error = %v", err)
+	}
+
+	idp.rotate(t, "kid-2")
+
+	_, err := requestConnection(t, server, idp.token(t, nil))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnavailable; got != want {
+		t.Fatalf("RequestConnection() within the refresh cooldown error code = %v, want %v (%v)", got, want, err)
+	}
+
+	if got, want := idp.fetch.Load(), int32(1); got != want {
+		t.Errorf("JWKS fetched %d times within the cooldown, want %d", got, want)
+	}
+
+	idp.advance(externaltoken.DefaultRefreshCooldown)
+
+	if _, err := requestConnection(t, server, idp.token(t, nil)); err != nil {
+		t.Fatalf("RequestConnection() after the cooldown error = %v", err)
+	}
+
+	if got, want := idp.fetch.Load(), int32(2); got != want {
+		t.Errorf("JWKS fetched %d times after the cooldown, want %d", got, want)
+	}
+}
+
+func TestRoutesRejectStaleKidAfterRefetch(t *testing.T) {
+	t.Parallel()
+
+	repo := newTestRepository(t)
+	repo.EXPECT().CreateSession(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(domain.SessionID("sess-1"), nil)
+
+	idp := newTestIdP(t)
+	server := newTestServer(t, repo, idp)
+	stale := idp.token(t, nil)
+
+	idp.rotate(t, "kid-2")
+
+	if _, err := requestConnection(t, server, idp.token(t, nil)); err != nil {
+		t.Fatalf("RequestConnection() with the current key error = %v", err)
+	}
+
+	idp.advance(externaltoken.DefaultRefreshCooldown)
+
+	_, err := requestConnection(t, server, stale)
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
+		t.Fatalf("RequestConnection() with a stale kid error code = %v, want %v (%v)", got, want, err)
+	}
+}
+
+func TestRoutesAnswerUnavailableWhenJWKSFails(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	idp.status.Store(http.StatusInternalServerError)
+	server := newTestServer(t, newTestRepository(t), idp)
+
+	_, err := requestConnection(t, server, idp.token(t, nil))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnavailable; got != want {
+		t.Fatalf("RequestConnection() error code = %v, want %v (%v)", got, want, err)
+	}
+}
+
+func TestRoutesRejectEmptyEdgeID(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	server := newTestServer(t, newTestRepository(t), idp)
+	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+
+	_, err := client.RequestConnection(context.Background(), newRequest(idp.token(t, nil), ""))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
+		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
+	}
+}
+
+func TestServiceWithoutPrincipalIsUnauthenticated(t *testing.T) {
+	t.Parallel()
+
+	service := NewService(newSignalingService(newTestRepository(t)))
+
+	_, err := service.RequestConnection(context.Background(), newRequest("", "edge-1"))
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
+		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
 	}
 }
 
@@ -113,10 +454,12 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 	captureLog(t)
 
 	repo := newTestRepository(t)
-	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID("tenant-1"), domain.EventID("event-1"), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
+	repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID(testTenantID), domain.EventID(testEventID), domain.EdgeID("edge-1")).Return(domain.SessionID(""), errors.New("firestore unavailable"))
 	service := NewService(newSignalingService(repo))
 
-	_, err := service.RequestConnection(context.Background(), newRequest("tenant-1", "event-1", "edge-1"))
+	ctx := authn.NewContext(context.Background(), authn.Principal{ClientID: consoleClientID, Role: authn.RoleConsole, TenantID: testTenantID, EventID: testEventID})
+
+	_, err := service.RequestConnection(ctx, newRequest("", "edge-1"))
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
 	}

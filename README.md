@@ -36,6 +36,8 @@ task up:build
 
 サーバーは `http://localhost:8080` で待ち受ける（停止は `task down`）  
 `server` は `FIRESTORE_EMULATOR_HOST=firebase-emulator:8080` で compose 内の Firestore エミュレータ（プロジェクト `demo-tolo`）に接続する  
+`fakeidp`（`http://localhost:8082`）は tolo-service-gateway の開発専用の偽 IdP で、`POST /token` の本文をそのまま claim にした `event_access` を検証なしで発行する。compose は tolo-service-gateway の git リポジトリをビルドコンテキストにして、コミットを固定した `fakeidp` ターゲットをビルドする  
+`server` は `IDP_JWKS_URL=http://fakeidp:8080/oauth2/jwks` でこの偽 IdP の鍵を参照し、`console-ui` を console 役、`edge-page` を edge 役の client として受理する  
 エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている
 
 ### シナリオテスト（runn）
@@ -48,11 +50,13 @@ task runn
 ```
 
 `task runn` は compose を起動してから `docker compose run --rm -T runn` を実行する  
-runbook はエミュレータのデータを消してから、次を確かめる
+runbook はエミュレータのデータを消し、`fakeidp` からトークンを得てから、次を確かめる
 
-- `RequestConnection` が session ID を返し、`tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
+- console 役の `event_access` を付けた `RequestConnection` が session ID を返し、トークンの `tenant_id` と `event_id` に従う `tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
+- トークンがない要求は `unauthenticated` になる
+- edge 役のトークンでの `RequestConnection` は `permission_denied` になる
+- 受理しない `client_id` のトークンは `permission_denied` になる
 - 空の `edge_id` は `invalid_argument` になる
-- `X-Tolo-Tenant-Id` と `X-Tolo-Event-Id` ヘッダがない要求は `unauthenticated` になる
 
 ### 環境変数
 
@@ -61,6 +65,11 @@ runbook はエミュレータのデータを消してから、次を確かめる
 | `SERVER_ADDR` | `:8080` | 待ち受けるアドレス |
 | `FIRESTORE_PROJECT_ID` | なし（必須） | 接続する Firestore の GCP プロジェクト ID。未設定ならサーバーは起動しない |
 | `FIRESTORE_EMULATOR_HOST` | なし | 設定すると Firestore クライアントが本番ではなくそのホストのエミュレータに接続する（クライアントライブラリの標準の挙動）。本番では設定しない |
+| `IDP_ISSUER` | なし（必須） | `event_access` に要求する `iss`。未設定ならサーバーは起動しない |
+| `IDP_AUDIENCE` | なし（必須） | `event_access` に要求する `aud`（バックエンド API 全体の論理 audience。例 `backend-api`。Service Gateway と同じ値） |
+| `IDP_JWKS_URL` | なし（必須） | IdP の JWKS の絶対 HTTP URL。鍵は 5 分キャッシュし、未知の `kid` は 30 秒に 1 回まで即時に再取得する |
+| `CONSOLE_CLIENT_ID` | なし（必須） | console 役（管理 UI）として受理する `client_id` |
+| `EDGE_CLIENT_ID` | なし（必須） | edge 役（観測ページ）として受理する `client_id`。`CONSOLE_CLIENT_ID` と同じ値は設定エラーになる |
 | `LOG_LEVEL` | `info` | ログに出力する最小レベル。`debug`／`info`／`warn`（`warning` も同義）／`error`／`critical` を取り、未知の値ならサーバーは起動しない |
 | `GOOGLE_CLOUD_PROJECT` | なし | 設定するとログの `logging.googleapis.com/trace` を `projects/<project>/traces/<trace_id>` 形式にし、Cloud Logging でトレースと相関させる。未設定なら素のトレース ID を出力する |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | なし | どちらかを設定したときだけ OTLP/HTTP で span を export する。未設定ならトレーシングは無効 |
@@ -68,7 +77,8 @@ runbook はエミュレータのデータを消してから、次を確かめる
 
 ヘッダ・TLS・タイムアウトなどその他の `OTEL_EXPORTER_OTLP_*` は exporter がそのまま解釈する  
 ログは標準出力へ 1 行 1 件の JSON で書き出す  
-Firestore の認証はクライアントライブラリの Application Default Credentials に従う
+Firestore の認証はクライアントライブラリの Application Default Credentials に従う  
+全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
 
 ### トレースの確認（Jaeger）
 

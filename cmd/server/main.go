@@ -14,7 +14,9 @@ import (
 	gcpfirestore "cloud.google.com/go/firestore"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/application"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/externaltoken"
 	connectinfra "github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect"
+	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/connect/authn"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/firestore"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/infra/httpapi"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/logging"
@@ -28,7 +30,19 @@ const (
 	readHeaderTimeout = 10 * time.Second
 )
 
-var errFirestoreProjectIDRequired = errors.New("FIRESTORE_PROJECT_ID is required")
+const (
+	envIDPIssuer       = "IDP_ISSUER"
+	envIDPAudience     = "IDP_AUDIENCE"
+	envIDPJWKSURL      = "IDP_JWKS_URL"
+	envConsoleClientID = "CONSOLE_CLIENT_ID"
+	envEdgeClientID    = "EDGE_CLIENT_ID"
+)
+
+var (
+	errFirestoreProjectIDRequired = errors.New("FIRESTORE_PROJECT_ID is required")
+	errEnvRequired                = errors.New("required environment variable is not set")
+	errClientIDsCollide           = errors.New(envConsoleClientID + " and " + envEdgeClientID + " must differ")
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -57,6 +71,11 @@ func run() error {
 		return errFirestoreProjectIDRequired
 	}
 
+	authenticator, err := newAuthenticator()
+	if err != nil {
+		return err
+	}
+
 	shutdownTracing, err := telemetry.Setup(ctx)
 	if err != nil {
 		return fmt.Errorf("setup tracing: %w", err)
@@ -77,7 +96,7 @@ func run() error {
 
 	signalingService := application.NewSignalingService(firestore.NewEdgeRepository(firestoreClient))
 
-	signalingRoutes, err := connectinfra.Routes(signalingService)
+	signalingRoutes, err := connectinfra.Routes(signalingService, authenticator)
 	if err != nil {
 		return fmt.Errorf("build handler: %w", err)
 	}
@@ -119,6 +138,60 @@ func run() error {
 
 		return httpServer.Shutdown(shutdownCtx)
 	}
+}
+
+func newAuthenticator() (*authn.Authenticator, error) {
+	values := make(map[string]string)
+
+	for _, key := range []string{envIDPIssuer, envIDPAudience, envIDPJWKSURL, envConsoleClientID, envEdgeClientID} {
+		values[key] = os.Getenv(key)
+		if values[key] == "" {
+			return nil, fmt.Errorf("%w: %s", errEnvRequired, key)
+		}
+	}
+
+	if values[envConsoleClientID] == values[envEdgeClientID] {
+		return nil, errClientIDsCollide
+	}
+
+	keys, err := externaltoken.NewKeySet(externaltoken.KeySetConfig{
+		URL:             values[envIDPJWKSURL],
+		HTTPClient:      nil,
+		CacheTTL:        0,
+		RefreshCooldown: 0,
+		FailureCooldown: 0,
+		FetchTimeout:    0,
+		RetryBackoff:    nil,
+		MaxDocumentSize: 0,
+		Clock:           nil,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", envIDPJWKSURL, err)
+	}
+
+	verifier, err := externaltoken.NewVerifier(externaltoken.Config{
+		Issuer:     values[envIDPIssuer],
+		Audience:   values[envIDPAudience],
+		Algorithms: nil,
+		Keys:       keys,
+		Leeway:     0,
+		Clock:      nil,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build the external token verifier: %w", err)
+	}
+
+	authenticator, err := authn.New(verifier, map[string]authn.Role{
+		values[envConsoleClientID]: authn.RoleConsole,
+		values[envEdgeClientID]:    authn.RoleEdge,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build the authenticator: %w", err)
+	}
+
+	slog.Info("external token verification configured", "issuer", values[envIDPIssuer], "audience", values[envIDPAudience], "jwks_url", values[envIDPJWKSURL])
+
+	return authenticator, nil
 }
 
 // newLogger builds the process logger from the environment. It is the first
