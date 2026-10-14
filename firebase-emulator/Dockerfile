@@ -14,10 +14,11 @@ RUN apt-get update \
 RUN npm install -g firebase-tools
 
 WORKDIR /srv
-COPY firebase.json ./
 
 RUN firebase setup:emulators:firestore \
  && firebase setup:emulators:ui
+
+COPY firebase.json firestore.rules ./
 
 EXPOSE 4000 4400 4500 8080 9099
 
