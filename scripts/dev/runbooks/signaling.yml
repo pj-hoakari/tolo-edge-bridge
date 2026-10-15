@@ -158,6 +158,7 @@ steps:
       && edgeClaims.tenant_id == vars.tenantId
       && edgeClaims.event_id == vars.eventId
       && edgeClaims.peer_role == "edge"
+      && edgeClaims.token_use == "signaling"
       && edgeClaims.expires_at == date(steps.issueEdgeToken.res.body.expiresAt).Unix()
   issueConsoleToken:
     bridge:
@@ -188,6 +189,7 @@ steps:
       && consoleClaims.tenant_id == vars.tenantId
       && consoleClaims.event_id == vars.eventId
       && consoleClaims.peer_role == "console"
+      && consoleClaims.token_use == "signaling"
       && consoleClaims.expires_at == date(steps.issueConsoleToken.res.body.expiresAt).Unix()
   issueTokenWithoutToken:
     bridge:
@@ -213,6 +215,8 @@ steps:
       consoleIDToken: steps.signInConsole.res.body.idToken
       expiredIDToken: |
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"expires_at": 1}))), "+", "-"), "/", "_"), "=") + "."
+      deliveryNotificationIDToken: |
+        "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"token_use": "delivery_notification"}))), "+", "-"), "/", "_"), "=") + "."
   sessionReadEdge:
     firestore:
       "{{ sessionURL }}":
@@ -245,6 +249,13 @@ steps:
         get:
           headers:
             Authorization: "Bearer {{ expiredIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadOtherTokenUse:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ deliveryNotificationIDToken }}"
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   sessionReadOtherTenant:
     firestore:

@@ -7,6 +7,7 @@ service cloud.firestore {
         return request.auth != null
           && request.auth.token.tenant_id == tenantId
           && request.auth.token.event_id == eventId
+          && request.auth.token.token_use == 'signaling'
           && request.time < timestamp.value(request.auth.token.expires_at * 1000);
       }
 
