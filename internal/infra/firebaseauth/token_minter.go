@@ -14,6 +14,9 @@ const (
 	claimEventID   = "event_id"
 	claimPeerRole  = "peer_role"
 	claimExpiresAt = "expires_at"
+	claimTokenUse  = "token_use"
+
+	tokenUseSignaling = "signaling"
 )
 
 type TokenMinter struct {
@@ -30,6 +33,7 @@ func (m *TokenMinter) Mint(ctx context.Context, access domain.FirestoreAccess) (
 		claimEventID:   string(access.EventID),
 		claimPeerRole:  string(access.Role),
 		claimExpiresAt: access.ExpiresAt.Unix(),
+		claimTokenUse:  tokenUseSignaling,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create custom token: %w", err)

@@ -67,6 +67,7 @@ func TestMintUnderTheEmulatorCarriesTheAccessAsCustomClaims(t *testing.T) {
 			EventID   string `json:"event_id"`
 			PeerRole  string `json:"peer_role"`
 			ExpiresAt int64  `json:"expires_at"`
+			TokenUse  string `json:"token_use"`
 		} `json:"claims"`
 	}
 
@@ -90,6 +91,10 @@ func TestMintUnderTheEmulatorCarriesTheAccessAsCustomClaims(t *testing.T) {
 
 	if got, want := payload.Claims.ExpiresAt, expiresAt.Unix(); got != want {
 		t.Errorf("expires_at = %d, want %d", got, want)
+	}
+
+	if got, want := payload.Claims.TokenUse, "signaling"; got != want {
+		t.Errorf("token_use = %q, want %q", got, want)
 	}
 }
 

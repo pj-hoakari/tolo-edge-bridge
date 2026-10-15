@@ -59,10 +59,10 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 - edge 役のトークンでの `RequestConnection` は `permission_denied` になる
 - 受理しない `client_id` のトークンは `permission_denied` になる
 - 空の `edge_id` は `invalid_argument` になる
-- edge 役と console 役の `event_access` を付けた `IssueFirestoreToken` がカスタムトークンを返し、Auth エミュレータの `signInWithCustomToken` でサインインできる。サインインしたユーザーの uid はトークンの `sub` で、カスタムクレームに `tenant_id`、`event_id`、`peer_role`、`expires_at` を持ち、`expires_at` はレスポンスの `expires_at` と同じ時刻を指す
+- edge 役と console 役の `event_access` を付けた `IssueFirestoreToken` がカスタムトークンを返し、Auth エミュレータの `signInWithCustomToken` でサインインできる。サインインしたユーザーの uid はトークンの `sub` で、カスタムクレームに `tenant_id`、`event_id`、`peer_role`、`expires_at`、`token_use`（`signaling`）を持ち、`expires_at` はレスポンスの `expires_at` と同じ時刻を指す
 - トークンがない `IssueFirestoreToken` は `unauthenticated`、受理しない `client_id` のトークンは `permission_denied` になる
-- サインインで得た ID トークンを Firestore エミュレータの REST API に付けて、セキュリティルールを確かめる。edge 役と console 役は自分のセッションと signals を読め、signals は `from` が自分の役割で、フィールドが `from`、`payload`、`createdAt` だけで、`createdAt` がサーバー時刻（`REQUEST_TIME`）のときだけ作れる。`from` の不一致、余分なフィールド、クライアントが決めた `createdAt`、signals の更新、セッションの作成と更新、edge 役による削除、別の tenant や event のパス、トークンなし、`expires_at` を過ぎたトークン、コレクショングループクエリは拒否され、console 役はセッションと signals を削除できる
-- `expires_at` を過ぎたトークンはサーバーが発行しないので、runbook が edge 役の ID トークンの claim を写して `expires_at` を過去にした署名なし（`alg: none`）の JWT を作り、エミュレータに渡す
+- サインインで得た ID トークンを Firestore エミュレータの REST API に付けて、セキュリティルールを確かめる。edge 役と console 役は自分のセッションと signals を読め、signals は `from` が自分の役割で、フィールドが `from`、`payload`、`createdAt` だけで、`createdAt` がサーバー時刻（`REQUEST_TIME`）のときだけ作れる。`from` の不一致、余分なフィールド、クライアントが決めた `createdAt`、signals の更新、セッションの作成と更新、edge 役による削除、別の tenant や event のパス、トークンなし、`expires_at` を過ぎたトークン、`token_use` が `signaling` でないトークン、コレクショングループクエリは拒否され、console 役はセッションと signals を削除できる
+- `expires_at` を過ぎたトークンはサーバーが発行しないので、runbook が edge 役の ID トークンの claim を写して `expires_at` を過去にした署名なし（`alg: none`）の JWT を作り、エミュレータに渡す。`token_use` が別の値のトークンも同じ方法で作る
 
 ### 環境変数
 
@@ -86,7 +86,7 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 ログは標準出力へ 1 行 1 件の JSON で書き出す  
 Firestore の認証はクライアントライブラリの Application Default Credentials に従う  
 カスタムトークンの署名も Application Default Credentials に従う。サービスアカウントの鍵ファイルがない環境（Cloud Run など）では Admin SDK が IAM の `signBlob` で署名するため、実行サービスアカウントに `roles/iam.serviceAccountTokenCreator` が必要になる。認証情報がなければサーバーは起動しない  
-全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。`IssueFirestoreToken` は edge 役と console 役が呼べ、`event_access` の `sub` を uid、`tenant_id`、`event_id`、役割（`peer_role`）、`exp`（`expires_at`、UNIX 秒）をカスタムクレームに持つ Firebase Auth のカスタムトークンを返す。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
+全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。`IssueFirestoreToken` は edge 役と console 役が呼べ、`event_access` の `sub` を uid、`tenant_id`、`event_id`、役割（`peer_role`）、`exp`（`expires_at`、UNIX 秒）、用途（`token_use`、`signaling`）をカスタムクレームに持つ Firebase Auth のカスタムトークンを返す。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
 
 ### トレースの確認（Jaeger）
 
