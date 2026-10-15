@@ -69,6 +69,7 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 | `tenant_id` | `event_access` の `tenant_id` |
 | `event_id` | `event_access` の `event_id` |
 | `peer_role` | `edge` または `console`。検証した `client_id` から決める |
+| `token_use` | `signaling`。Firestore 用カスタムトークンの用途を表す。内部 JWT の `token_use` とは別の語彙である（ADR-0098） |
 | `expires_at` | `event_access` の `exp`（UNIX 時刻、秒）。Firestore へアクセスできる期限 |
 
 - Firebase のセッションはリフレッシュトークンで更新され続けるため、カスタムトークンの有効期間（発行から 1 時間）は Firestore へアクセスできる期間の上限にならない。上限は `expires_at` とし、セキュリティルールで打ち切る
@@ -95,7 +96,7 @@ Service Gateway と同じ Connect エラーコードで返す。外部レスポ�
 - カスタムトークンのクレームは前節のとおりとする。`edge_device_id` はクレームに含めない
 - セッション文書は、本サービスが接続要求を受け付けたときに作る（Admin SDK）。接続要求は console 役だけが行え、tenant と event はリクエストではなく `event_access` から取る
 - signals は、`from`（送り手の役割）、`payload`（SDP または ICE 候補）、`createdAt` を持つ文書として追記する
-- セキュリティルールは、パスの `tenantId` と `eventId` がクレームと一致すること、`request.time` がクレームの `expires_at` より前であることをすべての許可の条件とし、そのうえで次を許す。これ以外のパスと操作は拒否し、コレクショングループクエリも許可しない
+- セキュリティルールは、パスの `tenantId` と `eventId` がクレームと一致すること、クレームの `token_use` が `signaling` であること、`request.time` がクレームの `expires_at` より前であることをすべての許可の条件とし、そのうえで次を許す。これ以外のパスと操作は拒否し、コレクショングループクエリも許可しない
 
 | 対象 | 読み取り | 作成 | 更新 | 削除 |
 |---|---|---|---|---|
