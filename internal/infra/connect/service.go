@@ -6,7 +6,7 @@ import (
 	"errors"
 	"log/slog"
 
-	connectrpc "connectrpc.com/connect"
+	connectrpc "connectrpc.com/connect/v2"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	edgebridgev1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
@@ -32,16 +32,16 @@ var errInternal = errors.New("internal error")
 // service answers an internal failure the same way.
 func InternalError(ctx context.Context, err error) *connectrpc.Error {
 	if errors.Is(err, context.Canceled) {
-		return connectrpc.NewError(connectrpc.CodeCanceled, err)
+		return connectrpc.NewError(connectrpc.CodeCanceled, err.Error()).WithCause(err)
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		return connectrpc.NewError(connectrpc.CodeDeadlineExceeded, err)
+		return connectrpc.NewError(connectrpc.CodeDeadlineExceeded, err.Error()).WithCause(err)
 	}
 
 	slog.ErrorContext(ctx, "internal error", "error", err)
 
-	return connectrpc.NewError(connectrpc.CodeInternal, errInternal) //nolint:forbidigo // the one place that builds internal errors
+	return connectrpc.NewError(connectrpc.CodeInternal, errInternal.Error()).WithCause(errInternal) //nolint:forbidigo // the one place that builds internal errors
 }
 
 type Service struct {
@@ -56,29 +56,29 @@ func NewService(signaling *application.SignalingService) *Service {
 	}
 }
 
-func (s *Service) RequestConnection(ctx context.Context, req *connectrpc.Request[edgebridgev1.RequestConnectionRequest]) (*connectrpc.Response[edgebridgev1.RequestConnectionResponse], error) {
+func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.RequestConnectionRequest) (*edgebridgev1.RequestConnectionResponse, error) {
 	principal, _ := authn.FromContext(ctx)
 
 	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
 		TenantID: principal.TenantID,
 		EventID:  principal.EventID,
-		EdgeID:   req.Msg.GetEdgeDeviceId(),
+		EdgeID:   req.GetEdgeDeviceId(),
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrTenantIDRequired), errors.Is(err, domain.ErrEventIDRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err)
+			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err.Error()).WithCause(err)
 		case errors.Is(err, domain.ErrEdgeIDRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err)
+			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err.Error()).WithCause(err)
 		default:
 			return nil, InternalError(ctx, err)
 		}
 	}
 
-	return connectrpc.NewResponse(&edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}), nil
+	return &edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}, nil
 }
 
-func (s *Service) IssueFirestoreToken(ctx context.Context, _ *connectrpc.Request[edgebridgev1.IssueFirestoreTokenRequest]) (*connectrpc.Response[edgebridgev1.IssueFirestoreTokenResponse], error) {
+func (s *Service) IssueFirestoreToken(ctx context.Context, _ *edgebridgev1.IssueFirestoreTokenRequest) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
 	principal, _ := authn.FromContext(ctx)
 
 	token, err := s.signaling.IssueFirestoreToken(ctx, application.IssueFirestoreTokenInput{
@@ -91,14 +91,14 @@ func (s *Service) IssueFirestoreToken(ctx context.Context, _ *connectrpc.Request
 	if err != nil {
 		switch {
 		case errors.Is(err, domain.ErrSubjectRequired), errors.Is(err, domain.ErrTenantIDRequired), errors.Is(err, domain.ErrEventIDRequired), errors.Is(err, domain.ErrPeerRoleInvalid), errors.Is(err, domain.ErrExpiresAtRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err)
+			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err.Error()).WithCause(err)
 		default:
 			return nil, InternalError(ctx, err)
 		}
 	}
 
-	return connectrpc.NewResponse(&edgebridgev1.IssueFirestoreTokenResponse{
+	return &edgebridgev1.IssueFirestoreTokenResponse{
 		FirebaseCustomToken: token.Token,
 		ExpiresAt:           timestamppb.New(token.ExpiresAt),
-	}), nil
+	}, nil
 }

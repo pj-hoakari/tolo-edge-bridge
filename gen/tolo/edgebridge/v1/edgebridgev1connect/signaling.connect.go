@@ -5,138 +5,135 @@
 package edgebridgev1connect
 
 import (
-	connect "connectrpc.com/connect"
+	connect "connectrpc.com/connect/v2"
 	context "context"
-	errors "errors"
 	v1 "github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1"
-	http "net/http"
-	strings "strings"
+	sync "sync"
 )
-
-// This is a compile-time assertion to ensure that this generated file and the connect package are
-// compatible. If you get a compiler error that this constant is not defined, this code was
-// generated with a version of connect newer than the one compiled into your binary. You can fix the
-// problem by either regenerating this code with an older version of connect or updating the connect
-// version compiled into your binary.
-const _ = connect.IsAtLeastVersion1_13_0
 
 const (
 	// SignalingServiceName is the fully-qualified name of the SignalingService service.
 	SignalingServiceName = "tolo.edgebridge.v1.SignalingService"
 )
 
-// These constants are the fully-qualified names of the RPCs defined in this package. They're
-// exposed at runtime as Spec.Procedure and as the final two segments of the HTTP route.
+// These constants are the procedure names of the RPCs defined in this package. They're exposed at
+// runtime as Spec.Procedure and as the final two segments of the HTTP route.
 //
 // Note that these are different from the fully-qualified method names used by
 // google.golang.org/protobuf/reflect/protoreflect. To convert from these constants to
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
-	// SignalingServiceRequestConnectionProcedure is the fully-qualified name of the SignalingService's
+	// SignalingServiceRequestConnectionProcedure is the procedure name of the SignalingService's
 	// RequestConnection RPC.
 	SignalingServiceRequestConnectionProcedure = "/tolo.edgebridge.v1.SignalingService/RequestConnection"
-	// SignalingServiceIssueFirestoreTokenProcedure is the fully-qualified name of the
-	// SignalingService's IssueFirestoreToken RPC.
+	// SignalingServiceIssueFirestoreTokenProcedure is the procedure name of the SignalingService's
+	// IssueFirestoreToken RPC.
 	SignalingServiceIssueFirestoreTokenProcedure = "/tolo.edgebridge.v1.SignalingService/IssueFirestoreToken"
+)
+
+var (
+	signalingServiceRequestConnectionSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_tolo_edgebridge_v1_signaling_proto.Services().ByName("SignalingService").Methods().ByName("RequestConnection"),
+			Procedure:  SignalingServiceRequestConnectionProcedure,
+		}
+	})
+	signalingServiceIssueFirestoreTokenSpec = sync.OnceValue(func() connect.Spec {
+		return connect.Spec{
+			StreamType: connect.StreamTypeUnary,
+			Schema:     v1.File_tolo_edgebridge_v1_signaling_proto.Services().ByName("SignalingService").Methods().ByName("IssueFirestoreToken"),
+			Procedure:  SignalingServiceIssueFirestoreTokenProcedure,
+		}
+	})
 )
 
 // SignalingServiceClient is a client for the tolo.edgebridge.v1.SignalingService service.
 type SignalingServiceClient interface {
 	// 指定した edge への接続を要求する。
 	// signaling は Firestore に接続セッションを作成して edge に通知し、session_id を返す。
-	RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error)
-	IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error)
+	RequestConnection(context.Context, *v1.RequestConnectionRequest) (*v1.RequestConnectionResponse, error)
+	IssueFirestoreToken(context.Context, *v1.IssueFirestoreTokenRequest) (*v1.IssueFirestoreTokenResponse, error)
 }
 
 // NewSignalingServiceClient constructs a client for the tolo.edgebridge.v1.SignalingService
-// service. By default, it uses the Connect protocol with the binary Protobuf Codec, asks for
-// gzipped responses, and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply
-// the connect.WithGRPC() or connect.WithGRPCWeb() options.
-//
-// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
-// http://api.acme.com or https://acme.com/grpc).
-func NewSignalingServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) SignalingServiceClient {
-	baseURL = strings.TrimRight(baseURL, "/")
-	signalingServiceMethods := v1.File_tolo_edgebridge_v1_signaling_proto.Services().ByName("SignalingService").Methods()
-	return &signalingServiceClient{
-		requestConnection: connect.NewClient[v1.RequestConnectionRequest, v1.RequestConnectionResponse](
-			httpClient,
-			baseURL+SignalingServiceRequestConnectionProcedure,
-			connect.WithSchema(signalingServiceMethods.ByName("RequestConnection")),
-			connect.WithClientOptions(opts...),
-		),
-		issueFirestoreToken: connect.NewClient[v1.IssueFirestoreTokenRequest, v1.IssueFirestoreTokenResponse](
-			httpClient,
-			baseURL+SignalingServiceIssueFirestoreTokenProcedure,
-			connect.WithSchema(signalingServiceMethods.ByName("IssueFirestoreToken")),
-			connect.WithClientOptions(opts...),
-		),
-	}
-}
-
-// signalingServiceClient implements SignalingServiceClient.
-type signalingServiceClient struct {
-	requestConnection   *connect.Client[v1.RequestConnectionRequest, v1.RequestConnectionResponse]
-	issueFirestoreToken *connect.Client[v1.IssueFirestoreTokenRequest, v1.IssueFirestoreTokenResponse]
-}
-
-// RequestConnection calls tolo.edgebridge.v1.SignalingService.RequestConnection.
-func (c *signalingServiceClient) RequestConnection(ctx context.Context, req *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error) {
-	return c.requestConnection.CallUnary(ctx, req)
-}
-
-// IssueFirestoreToken calls tolo.edgebridge.v1.SignalingService.IssueFirestoreToken.
-func (c *signalingServiceClient) IssueFirestoreToken(ctx context.Context, req *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error) {
-	return c.issueFirestoreToken.CallUnary(ctx, req)
+// service. Multiple service clients may share a single connect.Client.
+func NewSignalingServiceClient(client *connect.Client) SignalingServiceClient {
+	return &signalingServiceClient{client: client}
 }
 
 // SignalingServiceHandler is an implementation of the tolo.edgebridge.v1.SignalingService service.
 type SignalingServiceHandler interface {
 	// 指定した edge への接続を要求する。
 	// signaling は Firestore に接続セッションを作成して edge に通知し、session_id を返す。
-	RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error)
-	IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error)
+	RequestConnection(context.Context, *v1.RequestConnectionRequest) (*v1.RequestConnectionResponse, error)
+	IssueFirestoreToken(context.Context, *v1.IssueFirestoreTokenRequest) (*v1.IssueFirestoreTokenResponse, error)
 }
 
-// NewSignalingServiceHandler builds an HTTP handler from the service implementation. It returns the
-// path on which to mount the handler and the handler itself.
-//
-// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
-// and JSON codecs. They also support gzip compression.
-func NewSignalingServiceHandler(svc SignalingServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
-	signalingServiceMethods := v1.File_tolo_edgebridge_v1_signaling_proto.Services().ByName("SignalingService").Methods()
-	signalingServiceRequestConnectionHandler := connect.NewUnaryHandler(
-		SignalingServiceRequestConnectionProcedure,
-		svc.RequestConnection,
-		connect.WithSchema(signalingServiceMethods.ByName("RequestConnection")),
-		connect.WithHandlerOptions(opts...),
+// RegisterSignalingServiceHandler registers svc as the tolo.edgebridge.v1.SignalingService
+// implementation on server.
+func RegisterSignalingServiceHandler(server *connect.Server, svc SignalingServiceHandler) {
+	adapter := signalingServiceHandler{svc: svc}
+	server.Register(
+		connect.Method{Spec: signalingServiceRequestConnectionSpec(), Handler: adapter.requestConnection},
+		connect.Method{Spec: signalingServiceIssueFirestoreTokenSpec(), Handler: adapter.issueFirestoreToken},
 	)
-	signalingServiceIssueFirestoreTokenHandler := connect.NewUnaryHandler(
-		SignalingServiceIssueFirestoreTokenProcedure,
-		svc.IssueFirestoreToken,
-		connect.WithSchema(signalingServiceMethods.ByName("IssueFirestoreToken")),
-		connect.WithHandlerOptions(opts...),
-	)
-	return "/tolo.edgebridge.v1.SignalingService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case SignalingServiceRequestConnectionProcedure:
-			signalingServiceRequestConnectionHandler.ServeHTTP(w, r)
-		case SignalingServiceIssueFirestoreTokenProcedure:
-			signalingServiceIssueFirestoreTokenHandler.ServeHTTP(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})
 }
 
 // UnimplementedSignalingServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedSignalingServiceHandler struct{}
 
-func (UnimplementedSignalingServiceHandler) RequestConnection(context.Context, *connect.Request[v1.RequestConnectionRequest]) (*connect.Response[v1.RequestConnectionResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("tolo.edgebridge.v1.SignalingService.RequestConnection is not implemented"))
+func (UnimplementedSignalingServiceHandler) RequestConnection(context.Context, *v1.RequestConnectionRequest) (*v1.RequestConnectionResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "tolo.edgebridge.v1.SignalingService.RequestConnection is not implemented")
 }
 
-func (UnimplementedSignalingServiceHandler) IssueFirestoreToken(context.Context, *connect.Request[v1.IssueFirestoreTokenRequest]) (*connect.Response[v1.IssueFirestoreTokenResponse], error) {
-	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("tolo.edgebridge.v1.SignalingService.IssueFirestoreToken is not implemented"))
+func (UnimplementedSignalingServiceHandler) IssueFirestoreToken(context.Context, *v1.IssueFirestoreTokenRequest) (*v1.IssueFirestoreTokenResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, "tolo.edgebridge.v1.SignalingService.IssueFirestoreToken is not implemented")
+}
+
+type signalingServiceClient struct {
+	client *connect.Client
+}
+
+func (c *signalingServiceClient) RequestConnection(ctx context.Context, req *v1.RequestConnectionRequest) (*v1.RequestConnectionResponse, error) {
+	var res v1.RequestConnectionResponse
+	if err := c.client.CallUnary(ctx, signalingServiceRequestConnectionSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+func (c *signalingServiceClient) IssueFirestoreToken(ctx context.Context, req *v1.IssueFirestoreTokenRequest) (*v1.IssueFirestoreTokenResponse, error) {
+	var res v1.IssueFirestoreTokenResponse
+	if err := c.client.CallUnary(ctx, signalingServiceIssueFirestoreTokenSpec(), req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+type signalingServiceHandler struct{ svc SignalingServiceHandler }
+
+func (h signalingServiceHandler) requestConnection(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.RequestConnectionRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.RequestConnection(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
+}
+
+func (h signalingServiceHandler) issueFirestoreToken(ctx context.Context, _ connect.Spec, stream connect.ServerStream) error {
+	var req v1.IssueFirestoreTokenRequest
+	if err := stream.Receive(&req); err != nil {
+		return err
+	}
+	res, err := h.svc.IssueFirestoreToken(ctx, &req)
+	if err != nil {
+		return err
+	}
+	return stream.Send(res)
 }
