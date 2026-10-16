@@ -17,7 +17,8 @@ import (
 	"testing"
 	"time"
 
-	connectrpc "connectrpc.com/connect"
+	connectrpc "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 	"github.com/golang-jwt/jwt/v5"
 	"go.uber.org/mock/gomock"
 
@@ -232,21 +233,21 @@ func newTestServerWith(t *testing.T, service *application.SignalingService, idp 
 	return server
 }
 
-func newRequest(token, edgeID string) *connectrpc.Request[edgebridgev1.RequestConnectionRequest] {
-	req := connectrpc.NewRequest(&edgebridgev1.RequestConnectionRequest{EdgeDeviceId: edgeID})
+func withToken(ctx context.Context, token string) context.Context {
+	ctx, info := connectrpc.NewClientContext(ctx)
 	if token != "" {
-		req.Header().Set("Authorization", "Bearer "+token)
+		info.RequestHeader().Set("Authorization", "Bearer "+token)
 	}
 
-	return req
+	return ctx
 }
 
-func requestConnection(t *testing.T, server *httptest.Server, token string) (*connectrpc.Response[edgebridgev1.RequestConnectionResponse], error) {
+func requestConnection(t *testing.T, server *httptest.Server, token string) (*edgebridgev1.RequestConnectionResponse, error) {
 	t.Helper()
 
-	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+	client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
 
-	return client.RequestConnection(context.Background(), newRequest(token, "edge-1"))
+	return client.RequestConnection(withToken(context.Background(), token), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"})
 }
 
 func TestRoutesServeRequestConnectionForConsoleToken(t *testing.T) {
@@ -263,7 +264,7 @@ func TestRoutesServeRequestConnectionForConsoleToken(t *testing.T) {
 		t.Fatalf("RequestConnection() error = %v", err)
 	}
 
-	if got, want := res.Msg.GetSessionId(), "sess-1"; got != want {
+	if got, want := res.GetSessionId(), "sess-1"; got != want {
 		t.Errorf("SessionId = %q, want %q", got, want)
 	}
 }
@@ -443,9 +444,9 @@ func TestRoutesRejectEmptyEdgeID(t *testing.T) {
 
 	idp := newTestIdP(t)
 	server := newTestServer(t, newTestRepository(t), idp)
-	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+	client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
 
-	_, err := client.RequestConnection(context.Background(), newRequest(idp.token(t, nil), ""))
+	_, err := client.RequestConnection(withToken(context.Background(), idp.token(t, nil)), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: ""})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInvalidArgument; got != want {
 		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
 	}
@@ -456,28 +457,23 @@ func TestServiceWithoutPrincipalIsUnauthenticated(t *testing.T) {
 
 	service := NewService(newSignalingService(newTestRepository(t)))
 
-	_, err := service.RequestConnection(context.Background(), newRequest("", "edge-1"))
+	_, err := service.RequestConnection(context.Background(), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
 		t.Fatalf("RequestConnection() error code = %v, want %v", got, want)
 	}
 
-	_, err = service.IssueFirestoreToken(context.Background(), connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{}))
+	_, err = service.IssueFirestoreToken(context.Background(), &edgebridgev1.IssueFirestoreTokenRequest{})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeUnauthenticated; got != want {
 		t.Fatalf("IssueFirestoreToken() error code = %v, want %v", got, want)
 	}
 }
 
-func issueFirestoreToken(t *testing.T, server *httptest.Server, token string) (*connectrpc.Response[edgebridgev1.IssueFirestoreTokenResponse], error) {
+func issueFirestoreToken(t *testing.T, server *httptest.Server, token string) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
 	t.Helper()
 
-	client := edgebridgev1connect.NewSignalingServiceClient(server.Client(), server.URL)
+	client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
 
-	req := connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{})
-	if token != "" {
-		req.Header().Set("Authorization", "Bearer "+token)
-	}
-
-	return client.IssueFirestoreToken(context.Background(), req)
+	return client.IssueFirestoreToken(withToken(context.Background(), token), &edgebridgev1.IssueFirestoreTokenRequest{})
 }
 
 func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
@@ -515,11 +511,11 @@ func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
 				t.Fatalf("IssueFirestoreToken() error = %v", err)
 			}
 
-			if got, want := res.Msg.GetFirebaseCustomToken(), "custom-token"; got != want {
+			if got, want := res.GetFirebaseCustomToken(), "custom-token"; got != want {
 				t.Errorf("FirebaseCustomToken = %q, want %q", got, want)
 			}
 
-			if got := res.Msg.GetExpiresAt().AsTime(); !got.Equal(wantExpiresAt) {
+			if got := res.GetExpiresAt().AsTime(); !got.Equal(wantExpiresAt) {
 				t.Errorf("ExpiresAt = %v, want %v", got, wantExpiresAt)
 			}
 
@@ -552,7 +548,7 @@ func TestServiceMinterFailureIsInternal(t *testing.T) {
 
 	ctx := authn.NewContext(context.Background(), authn.Principal{Subject: "user-1", ClientID: edgeClientID, Role: domain.PeerRoleEdge, TenantID: testTenantID, EventID: testEventID, ExpiresAt: time.Now()})
 
-	_, err := service.IssueFirestoreToken(ctx, connectrpc.NewRequest(&edgebridgev1.IssueFirestoreTokenRequest{}))
+	_, err := service.IssueFirestoreToken(ctx, &edgebridgev1.IssueFirestoreTokenRequest{})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("IssueFirestoreToken() error code = %v, want %v", got, want)
 	}
@@ -571,7 +567,7 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 
 	ctx := authn.NewContext(context.Background(), authn.Principal{ClientID: consoleClientID, Role: domain.PeerRoleConsole, TenantID: testTenantID, EventID: testEventID})
 
-	_, err := service.RequestConnection(ctx, newRequest("", "edge-1"))
+	_, err := service.RequestConnection(ctx, &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
 	}

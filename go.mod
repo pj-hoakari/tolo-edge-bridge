@@ -3,14 +3,14 @@ module github.com/pj-hoakari/tolo-edge-bridge
 go 1.27.2
 
 tool (
-	connectrpc.com/connect/cmd/protoc-gen-connect-go
+	connectrpc.com/connect/v2/cmd/protoc-gen-connect-go
 	go.uber.org/mock/mockgen
 	google.golang.org/protobuf/cmd/protoc-gen-go
 )
 
 require (
 	cloud.google.com/go/firestore v1.26.0
-	connectrpc.com/connect v1.21.0
+	connectrpc.com/connect/v2 v2.0.1
 	connectrpc.com/otelconnect v0.12.0
 	firebase.google.com/go/v4 v4.22.0
 	github.com/go-logr/logr v1.4.4
@@ -34,7 +34,7 @@ require (
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
 	cloud.google.com/go/storage v1.62.1 // indirect
-	connectrpc.com/connect/v2 v2.0.0 // indirect
+	connectrpc.com/connect v1.21.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.34.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 // indirect

@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	connectrpc "connectrpc.com/connect"
+	connectrpc "connectrpc.com/connect/v2"
+	"connectrpc.com/connect/v2/connecthttp"
 
 	"github.com/pj-hoakari/tolo-edge-bridge/gen/tolo/edgebridge/v1/edgebridgev1connect"
 	"github.com/pj-hoakari/tolo-edge-bridge/internal/domain"
@@ -61,7 +62,7 @@ type Verifier interface {
 type Authenticator struct {
 	verifier    Verifier
 	clients     map[string]domain.PeerRole
-	errorWriter *connectrpc.ErrorWriter
+	errorWriter *connecthttp.ErrorWriter
 }
 
 func New(verifier Verifier, clients map[string]domain.PeerRole) (*Authenticator, error) {
@@ -76,7 +77,7 @@ func New(verifier Verifier, clients map[string]domain.PeerRole) (*Authenticator,
 	return &Authenticator{
 		verifier:    verifier,
 		clients:     clients,
-		errorWriter: connectrpc.NewErrorWriter(),
+		errorWriter: connecthttp.NewErrorWriter(),
 	}, nil
 }
 
@@ -150,11 +151,11 @@ func grantsAcceptedScope(scope string) bool {
 func rejectionOf(err error) *connectrpc.Error {
 	switch {
 	case errors.Is(err, externaltoken.ErrKeysUnavailable):
-		return connectrpc.NewError(connectrpc.CodeUnavailable, errAuthenticationUnavailable)
+		return connectrpc.NewError(connectrpc.CodeUnavailable, errAuthenticationUnavailable.Error()).WithCause(errAuthenticationUnavailable)
 	case errors.Is(err, errUnknownClient), errors.Is(err, errMissingScope), errors.Is(err, errRoleNotAllowed):
-		return connectrpc.NewError(connectrpc.CodePermissionDenied, errPermissionDenied)
+		return connectrpc.NewError(connectrpc.CodePermissionDenied, errPermissionDenied.Error()).WithCause(errPermissionDenied)
 	default:
-		return connectrpc.NewError(connectrpc.CodeUnauthenticated, errUnauthenticated)
+		return connectrpc.NewError(connectrpc.CodeUnauthenticated, errUnauthenticated.Error()).WithCause(errUnauthenticated)
 	}
 }
 
