@@ -10,7 +10,8 @@ tool (
 
 require (
 	cloud.google.com/go/firestore v1.26.0
-	connectrpc.com/connect v1.21.0
+	connectrpc.com/connect v1.19.1
+	connectrpc.com/connect/v2 v2.0.0
 	connectrpc.com/otelconnect v0.12.0
 	firebase.google.com/go/v4 v4.22.0
 	github.com/go-logr/logr v1.4.4
@@ -34,7 +35,6 @@ require (
 	cloud.google.com/go/longrunning v1.2.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
 	cloud.google.com/go/storage v1.62.1 // indirect
-	connectrpc.com/connect/v2 v2.0.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.34.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.56.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.56.0 // indirect
