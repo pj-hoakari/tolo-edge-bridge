@@ -40,10 +40,6 @@ var (
 	errUnknownClient          = errors.New("client_id is not an accepted client")
 	errMissingScope           = errors.New("scope grants neither events.read nor events.report")
 	errRoleNotAllowed         = errors.New("the role may not call this procedure")
-
-	errUnauthenticated           = errors.New("unauthenticated")
-	errPermissionDenied          = errors.New("permission denied")
-	errAuthenticationUnavailable = errors.New("authentication unavailable")
 )
 
 type Principal struct {
@@ -151,11 +147,11 @@ func grantsAcceptedScope(scope string) bool {
 func rejectionOf(err error) *connectrpc.Error {
 	switch {
 	case errors.Is(err, externaltoken.ErrKeysUnavailable):
-		return connectrpc.NewError(connectrpc.CodeUnavailable, errAuthenticationUnavailable.Error()).WithCause(errAuthenticationUnavailable)
+		return connectrpc.NewError(connectrpc.CodeUnavailable, "authentication unavailable").WithCause(err)
 	case errors.Is(err, errUnknownClient), errors.Is(err, errMissingScope), errors.Is(err, errRoleNotAllowed):
-		return connectrpc.NewError(connectrpc.CodePermissionDenied, errPermissionDenied.Error()).WithCause(errPermissionDenied)
+		return connectrpc.NewError(connectrpc.CodePermissionDenied, "permission denied").WithCause(err)
 	default:
-		return connectrpc.NewError(connectrpc.CodeUnauthenticated, errUnauthenticated.Error()).WithCause(errUnauthenticated)
+		return connectrpc.NewError(connectrpc.CodeUnauthenticated, "unauthenticated").WithCause(err)
 	}
 }
 

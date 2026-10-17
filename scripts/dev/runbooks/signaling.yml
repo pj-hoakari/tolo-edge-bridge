@@ -72,7 +72,7 @@ steps:
           body:
             application/json:
               edgeDeviceId: edge-1
-    test: current.res.status == 401 && current.res.body.code == "unauthenticated"
+    test: current.res.status == 401 && current.res.body.code == "unauthenticated" && current.res.body.message == "unauthenticated"
   edgeToken:
     idp:
       /token:
@@ -95,7 +95,7 @@ steps:
           body:
             application/json:
               edgeDeviceId: edge-1
-    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied" && current.res.body.message == "permission denied"
   unknownClientToken:
     idp:
       /token:
@@ -128,7 +128,7 @@ steps:
           body:
             application/json:
               edgeDeviceId: ""
-    test: current.res.status == 400 && current.res.body.code == "invalid_argument"
+    test: current.res.status == 400 && current.res.body.code == "invalid_argument" && current.res.body.message == "edge_device_id is required"
   issueEdgeToken:
     bridge:
       /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:

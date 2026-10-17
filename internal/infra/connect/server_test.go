@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net/http"
@@ -570,5 +571,96 @@ func TestServiceRepositoryFailureIsInternal(t *testing.T) {
 	_, err := service.RequestConnection(ctx, &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: "edge-1"})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {
 		t.Errorf("RequestConnection() error code = %v, want %v", got, want)
+	}
+}
+
+func TestServiceAnswersFixedMessages(t *testing.T) {
+	t.Parallel()
+
+	console := authn.Principal{ClientID: consoleClientID, Role: domain.PeerRoleConsole, TenantID: testTenantID, EventID: testEventID}
+
+	requestConnection := func(t *testing.T, principal authn.Principal, edgeID string, repoErr error) error {
+		t.Helper()
+
+		repo := newTestRepository(t)
+		if repoErr != nil {
+			repo.EXPECT().CreateSession(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(domain.SessionID(""), repoErr)
+		}
+
+		_, err := NewService(newSignalingService(repo)).RequestConnection(authn.NewContext(context.Background(), principal), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: edgeID})
+
+		return err
+	}
+
+	tests := []struct {
+		name        string
+		call        func(t *testing.T) error
+		wantCode    connectrpc.Code
+		wantMessage string
+	}{
+		{
+			name: "wrapped sentinel",
+			call: func(*testing.T) error {
+				return errorOf(context.Background(), fmt.Errorf("find edge: %w", domain.ErrEdgeIDRequired))
+			},
+			wantCode:    connectrpc.CodeInvalidArgument,
+			wantMessage: "edge_device_id is required",
+		},
+		{
+			name: "invalid peer role",
+			call: func(t *testing.T) error {
+				t.Helper()
+
+				principal := authn.Principal{Subject: "user-1", ClientID: "operator-ui", Role: "operator", TenantID: testTenantID, EventID: testEventID, ExpiresAt: time.Now()}
+				_, err := NewService(application.NewSignalingService(newTestRepository(t), newTestMinter(t))).IssueFirestoreToken(authn.NewContext(context.Background(), principal), &edgebridgev1.IssueFirestoreTokenRequest{})
+
+				return err
+			},
+			wantCode:    connectrpc.CodeUnauthenticated,
+			wantMessage: "client_id has no peer role",
+		},
+		{
+			name:        "missing tenant",
+			call:        func(t *testing.T) error { return requestConnection(t, authn.Principal{}, "edge-1", nil) },
+			wantCode:    connectrpc.CodeUnauthenticated,
+			wantMessage: "tenant_id is missing from the token",
+		},
+		{
+			name:        "empty edge",
+			call:        func(t *testing.T) error { return requestConnection(t, console, "", nil) },
+			wantCode:    connectrpc.CodeInvalidArgument,
+			wantMessage: "edge_device_id is required",
+		},
+		{
+			name:        "canceled",
+			call:        func(t *testing.T) error { return requestConnection(t, console, "edge-1", context.Canceled) },
+			wantCode:    connectrpc.CodeCanceled,
+			wantMessage: "canceled",
+		},
+		{
+			name:        "deadline exceeded",
+			call:        func(t *testing.T) error { return requestConnection(t, console, "edge-1", context.DeadlineExceeded) },
+			wantCode:    connectrpc.CodeDeadlineExceeded,
+			wantMessage: "deadline exceeded",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var connectErr *connectrpc.Error
+			if !errors.As(tt.call(t), &connectErr) {
+				t.Fatal("error is not a *connectrpc.Error")
+			}
+
+			if got := connectErr.Code(); got != tt.wantCode {
+				t.Errorf("Code() = %v, want %v", got, tt.wantCode)
+			}
+
+			if got := connectErr.Message(); got != tt.wantMessage {
+				t.Errorf("Message() = %q, want %q", got, tt.wantMessage)
+			}
+		})
 	}
 }
