@@ -32,16 +32,39 @@ var errInternal = errors.New("internal error")
 // service answers an internal failure the same way.
 func InternalError(ctx context.Context, err error) *connectrpc.Error {
 	if errors.Is(err, context.Canceled) {
-		return connectrpc.NewError(connectrpc.CodeCanceled, err.Error()).WithCause(err)
+		return connectrpc.NewError(connectrpc.CodeCanceled, "canceled").WithCause(err)
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		return connectrpc.NewError(connectrpc.CodeDeadlineExceeded, err.Error()).WithCause(err)
+		return connectrpc.NewError(connectrpc.CodeDeadlineExceeded, "deadline exceeded").WithCause(err)
 	}
 
 	slog.ErrorContext(ctx, "internal error", "error", err)
 
-	return connectrpc.NewError(connectrpc.CodeInternal, errInternal.Error()).WithCause(errInternal) //nolint:forbidigo // the one place that builds internal errors
+	return connectrpc.NewError(connectrpc.CodeInternal, "internal error").WithCause(errInternal) //nolint:forbidigo // the one place that builds internal errors
+}
+
+var clientErrors = []struct {
+	target  error
+	code    connectrpc.Code
+	message string
+}{
+	{domain.ErrSubjectRequired, connectrpc.CodeUnauthenticated, "subject is missing from the token"},
+	{domain.ErrTenantIDRequired, connectrpc.CodeUnauthenticated, "tenant_id is missing from the token"},
+	{domain.ErrEventIDRequired, connectrpc.CodeUnauthenticated, "event_id is missing from the token"},
+	{domain.ErrPeerRoleInvalid, connectrpc.CodeUnauthenticated, "client_id has no peer role"},
+	{domain.ErrExpiresAtRequired, connectrpc.CodeUnauthenticated, "expiry is missing from the token"},
+	{domain.ErrEdgeIDRequired, connectrpc.CodeInvalidArgument, "edge_device_id is required"},
+}
+
+func errorOf(ctx context.Context, err error) *connectrpc.Error {
+	for _, e := range clientErrors {
+		if errors.Is(err, e.target) {
+			return connectrpc.NewError(e.code, e.message).WithCause(err)
+		}
+	}
+
+	return InternalError(ctx, err)
 }
 
 type Service struct {
@@ -65,14 +88,7 @@ func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.Reque
 		EdgeID:   req.GetEdgeDeviceId(),
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrTenantIDRequired), errors.Is(err, domain.ErrEventIDRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err.Error()).WithCause(err)
-		case errors.Is(err, domain.ErrEdgeIDRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeInvalidArgument, err.Error()).WithCause(err)
-		default:
-			return nil, InternalError(ctx, err)
-		}
+		return nil, errorOf(ctx, err)
 	}
 
 	return &edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}, nil
@@ -89,12 +105,7 @@ func (s *Service) IssueFirestoreToken(ctx context.Context, _ *edgebridgev1.Issue
 		ExpiresAt: principal.ExpiresAt,
 	})
 	if err != nil {
-		switch {
-		case errors.Is(err, domain.ErrSubjectRequired), errors.Is(err, domain.ErrTenantIDRequired), errors.Is(err, domain.ErrEventIDRequired), errors.Is(err, domain.ErrPeerRoleInvalid), errors.Is(err, domain.ErrExpiresAtRequired):
-			return nil, connectrpc.NewError(connectrpc.CodeUnauthenticated, err.Error()).WithCause(err)
-		default:
-			return nil, InternalError(ctx, err)
-		}
+		return nil, errorOf(ctx, err)
 	}
 
 	return &edgebridgev1.IssueFirestoreTokenResponse{
