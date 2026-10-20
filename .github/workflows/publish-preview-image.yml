@@ -26,7 +26,7 @@ jobs:
         steps:
             - name: Resolve pull request head
               id: pr
-              uses: pj-hoakari/actions/pull-request-head@d97453bf65679b4d0993b43dad1c38e16ba6ae38 # feat/preview-image-parts
+              uses: pj-hoakari/actions/pull-request-head@a753f5b7b0efae839bd92d283fca39401471a4b2 # v20261020.0.0
               with:
                   number: ${{ inputs.pull-request }}
 
@@ -36,7 +36,7 @@ jobs:
                   ref: ${{ steps.pr.outputs.sha }}
 
             - name: Build and push
-              uses: pj-hoakari/actions/publish-image@d97453bf65679b4d0993b43dad1c38e16ba6ae38 # feat/preview-image-parts
+              uses: pj-hoakari/actions/publish-image@a753f5b7b0efae839bd92d283fca39401471a4b2 # v20261020.0.0
               with:
                   sha: ${{ steps.pr.outputs.sha }}
                   platforms: linux/amd64
