@@ -40,7 +40,8 @@ task up:build
 `server` は `IDP_JWKS_URL=http://fakeidp:8080/oauth2/jwks` でこの偽 IdP の鍵を参照し、`console-ui` を console 役、`edge-page` を edge 役の client として受理する  
 `server` は `FIREBASE_AUTH_EMULATOR_HOST=firebase-emulator:9099` で compose 内の Firebase Auth エミュレータを使い、カスタムトークンを署名なしで発行する  
 エミュレータは `firebase-emulator/` の Dockerfile からビルドし、ホストへは Firestore を `localhost:8081`、Firebase Auth を `localhost:9099`、Emulator UI を `http://localhost:4000` で公開する。ホストの 8080 番はサーバーが使うので、Firestore は 8081 番にずらしている  
-シグナリング文書のセキュリティルールは `firebase-emulator/firestore.rules` にあり、同じディレクトリの `firebase.json` が参照する。Firestore エミュレータはこのルールを読み込んで適用するので、`Authorization: Bearer owner`（Admin SDK 相当）以外の要求はルールに従う
+シグナリング文書のセキュリティルールは `firebase-emulator/firestore.rules` にあり、同じディレクトリの `firebase.json` が参照する。Firestore エミュレータはこのルールを読み込んで適用するので、`Authorization: Bearer owner`（Admin SDK 相当）以外の要求はルールに従う  
+このエミュレータは tolo-realtime と共有するので、`firestore.rules` には Realtime の最終更新 ID 文書（`deliveryNotifications/{eventId}`）のルールも置く。内容は tolo-realtime の仕様（`realtime_spec.md`）に従う
 
 ### シナリオテスト（runn）
 
