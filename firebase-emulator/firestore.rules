@@ -29,12 +29,5 @@ service cloud.firestore {
         allow delete: if peer() && role() == 'console';
       }
     }
-
-    match /deliveryNotifications/{eventId} {
-      allow read: if request.auth != null
-        && request.auth.token.event_id == eventId
-        && request.auth.token.token_use == 'delivery_notification'
-        && request.time < timestamp.value(request.auth.token.expires_at * 1000);
-    }
   }
 }
