@@ -25,7 +25,7 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 - 映像の中継。映像はページ間で直接やりとりする（P2P）。本サービスを通らない
 - 映像越しの設定変更。観測点のグラフ紐づけを映像で確認しながら行う操作は、ページ同士で完結する。マイクロサービスを介さない
 - エッジ端末のライフサイクル管理。登録・登録解除・Heartbeat は Observation が持つ
-- エッジ端末の稼働状態の把握。管理 UI は稼働中（待ち受け中）のエッジ端末を Observation の `ListEdgeDevices` から得る。本サービスは稼働中の端末の一覧を持たず、返さない
+- 観測ページ端末の稼働状態の把握。管理 UI は稼働中（待ち受け中）の観測ページ端末を Observation の `ListEdgeDevices` から得る。本サービスは稼働中の端末の一覧を持たず、返さない。カメラ端末は Heartbeat も `online` も持たない
 
 シグナリングの仲介だけを担い、確立後の通信には関与しない。
 
@@ -35,27 +35,28 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 
 | 入出力 | 説明（ユビキタス言語） | 相手 | 認可 | 関連ドメインイベント |
 |---|---|---|---|---|
-| RequestConnection | 指定したエッジ端末への接続を要求する。セッション文書を作り、`session_id` を返す。tenant と event は `event_access` から取る | 管理 UI（BFF 経由） | `event_access` + events.read、console 役 | AccessRequested |
-| IssueFirestoreToken | シグナリング文書を読み書きするための Firebase Auth カスタムトークンを発行する。tenant と event は `event_access` から取る | 管理 UI、エッジ端末の観測ページ（いずれも BFF 経由） | `event_access` + events.read または events.report、edge 役または console 役 | （発行のみ） |
+| RequestConnection | 指定したエッジ端末への接続を要求する。セッション文書を作り、`session_id` を返す。tenant と event は `event_access` から取る | 管理 UI、観測ページの接続用 client（いずれも BFF 経由） | `event_access` + events.read、console 役 | AccessRequested |
+| IssueFirestoreToken | シグナリング文書を読み書きするための Firebase Auth カスタムトークンを発行する。tenant と event は `event_access` から取る。接続用 client は `edge_device_id` と `session_id` を指定し、対象セッションに束縛する | 管理 UI、観測ページ（BFF 経由）、観測ページの接続用 client（BFF 経由）、ESP カメラ（直接） | `event_access` + events.read／events.report／events.stream、edge 役または console 役 | （発行のみ） |
 
 ## ピアの識別（確定分）
 
-- エッジ端末側のピアは `edge_device_id`（Observation が発行する公開 ID）で識別する。観測ページは発行 URL に含まれる `edge_device_id` を使い、端末側のストレージに別の識別子を持たない
+- エッジ端末側のピアは `edge_device_id`（Observation が発行する公開 ID）で識別する。観測ページは発行 URL に含まれる `edge_device_id` を使い、端末側のストレージに別の識別子を持たない。ESP カメラは初期設定で受け取った `edge_device_id` を設定に保持し、signaling のパスに使う（ADR-0126）
   `edge_device_id` を持たない観測ページは WebRTC で待ち受けない
-- エッジ端末の稼働中と WebRTC の待ち受け中は同じ状態である。観測ページは待ち受けている間だけ Observation へ Heartbeat を送る（Observation）
-- 管理 UI は Observation の `ListEdgeDevices` で稼働中のエッジ端末を得て、その `edge_device_id` を指定して接続を要求する
-- 接続中は、管理 UI とエッジ端末の P2P 通信が確立している状態を指す。管理 UI 側の状態であり、本サービスも Observation も持たない
-- 本サービスは接続要求の受け付け時に、エッジ端末の稼働を確かめない。待ち受けをやめた直後の端末は、途絶の判定までの最大30秒は稼働中として表示され、その間の接続要求は確立しない
+- 観測ページ端末の稼働中と WebRTC の待ち受け中は同じ状態である。観測ページは待ち受けている間だけ Observation へ Heartbeat を送る（Observation）。ESP カメラは Heartbeat を送らない
+- 管理 UI と観測ページの接続用 client は、Observation の `ListEdgeDevices` で得たエッジ端末へ接続を要求する。観測ページの接続用 client は、接続委任に含まれるカメラに限る（ADR-0129）
+- 1つの観測ページ端末は複数のカメラ端末へ同時に接続でき、カメラごとにセッションを持つ（ADR-0130）
+- 接続中は、管理 UI と観測ページ端末、または観測ページ端末とカメラ端末の P2P 通信が確立している状態を指す。管理 UI 側の状態であり、本サービスも Observation も持たない
+- 本サービスは接続要求の受け付け時に、観測ページ端末の稼働を確かめない。待ち受けをやめた直後の端末は、途絶の判定までの最大30秒は稼働中として表示され、その間の接続要求は確立しない
 
 ## 認証・認可（確定分）
 
 - 認証・認可は Firestore のアクセス制御として設計する。内部 JWT の枠組み（internal_jwt.md）の外にあるが、外部資格情報は IdP 発行トークンに一本化する方針は共有する
 - 本サービスが `event_access` を直接検証し（IdP の JWKS を参照する。Service Gateway 以外で唯一の参照先）、Firebase Auth のカスタムトークン（`event_id` 等をクレームに含む短命のもの）を発行する
 - セキュリティルールがカスタムトークンのクレームと文書パスを突合し、シグナリング文書の読み書きを制限する
-- 直接検証は、本文をデコードする前の HTTP middleware で、全 RPC に共通して行う。確認する項目: `iss`（IdP）、`aud`（バックエンド API 全体の論理 audience。例 backend-api。Service Gateway が検証する値と同じで、audience はバックエンド API 全体の論理識別子として扱い、本サービス専用の audience は追加しない）、`exp`／`nbf`（clock skew 許容 ±30 秒）、`token_use = event_access`、`tenant_id` と `event_id`（`event_access` が持つこと。リクエストに対象イベントを含めないため、突き合わせる値はない）、scope（`events.report` または `events.read` を受理する）、`client_id`（発行先 client。受理する client の登録と完全一致すること。受理するのは管理 UI の client とエッジ端末の観測ページの client に限り、未登録の client は scope が足りていても拒否する）。JWKS はキャッシュし、未知の `kid` は即時再取得する（レート制限付き。Service Gateway の規約と同じ）
-- 受理する client（管理 UI と観測ページ）は、どちらも BFF の背後の confidential client であり、発行されるトークンは鍵束縛を持たない。`event_access` が鍵束縛（`cnf`（`jkt`））を持つ場合は拒否する。DPoP proof は検証しない（ADR-0087）
-- 管理 UI と観測ページは、どちらも BFF を経由して本サービスを呼ぶ。ブラウザからは直接呼ばない。本サービスは CORS を設けない（ADR-0087）
-- 役割（edge 役、console 役）の判定も middleware で行う。`RequestConnection` は console 役だけに許可する
+- 直接検証は、本文をデコードする前の HTTP middleware で、全 RPC に共通して行う。確認する項目: `iss`（IdP）、`aud`（バックエンド API 全体の論理 audience。例 backend-api。Service Gateway が検証する値と同じで、audience はバックエンド API 全体の論理識別子として扱い、本サービス専用の audience は追加しない）、`exp`／`nbf`（clock skew 許容 ±30 秒）、`token_use = event_access`、`tenant_id` と `event_id`（`event_access` が持つこと。リクエストに対象イベントを含めないため、突き合わせる値はない）、scope（`events.report`、`events.read`、`events.stream` のいずれかを受理する）、`client_id`（発行先 client。受理する client の登録と完全一致すること。受理するのは管理 UI、エッジ端末の観測ページ、ESP カメラ、観測ページの接続用 client に限り、未登録の client は scope が足りていても拒否する）。JWKS はキャッシュし、未知の `kid` は即時再取得する（レート制限付き。Service Gateway の規約と同じ）
+- 受理する client のうち、管理 UI、観測ページ、接続用 client は BFF の背後の confidential client であり、発行されるトークンは鍵束縛を持たない。ESP カメラは public client だが、`cnf` を持つトークンを拒否する現行の規則により bearer とする。`event_access` が鍵束縛（`cnf`（`jkt`））を持つ場合は拒否する。DPoP proof は検証しない（ADR-0087、ADR-0127）
+- 管理 UI、観測ページ、接続用 client は BFF を経由して本サービスを呼ぶ。ESP カメラは BFF を挟まず直接呼ぶ。ブラウザからは直接呼ばない。本サービスは CORS を設けない（ADR-0087）
+- 役割（edge 役、console 役）の判定も middleware で行う。`RequestConnection` は console 役だけに許可する。ESP カメラの client は edge 役、接続用 client は console 役とする
 - 失効確認（introspection）は行わず、TTL による自然失効に委ねる。シグナリングは管理系の書き込みではなく、発行するカスタムトークンも短命であるため
 - Realtime の Firestore 変更検知も同一方式のアクセス制御を使う（発行は Realtime。Realtime）
 
@@ -69,11 +70,14 @@ service_gateway.md の「マイクロサービスへ Service Gateway を迂回�
 | `tenant_id` | `event_access` の `tenant_id` |
 | `event_id` | `event_access` の `event_id` |
 | `peer_role` | `edge` または `console`。検証した `client_id` から決める |
+| `edge_device_id` | ESP カメラと観測ページのedge用 `event_access` にある `edge_device_id`。接続用 client では接続先カメラの要求 `edge_device_id`。管理 UI のconsole用トークンでは未設定 |
+| `session_id` | 接続用 client の要求の `session_id`。管理 UI、観測ページ、ESP カメラのトークンでは未設定 |
 | `token_use` | `signaling`。Firestore 用カスタムトークンの用途を表す。内部 JWT の `token_use` とは別の語彙である（ADR-0098） |
 | `expires_at` | `event_access` の `exp`（UNIX 時刻、秒）。Firestore へアクセスできる期限 |
 
 - Firebase のセッションはリフレッシュトークンで更新され続けるため、カスタムトークンの有効期間（発行から 1 時間）は Firestore へアクセスできる期間の上限にならない。上限は `expires_at` とし、セキュリティルールで打ち切る
 - レスポンスの `expires_at` はクレームの `expires_at` と同じ時刻を指す。クライアントは、この時刻の前に新しい `event_access` でカスタムトークンを取り直し、サインインし直す
+- `IssueFirestoreToken` は、edge役のトークン（ESP カメラと観測ページ）では `event_access` の `edge_device_id` を必須とし、接続用 client では要求の `edge_device_id` と `session_id` を必須とする。欠ける場合は `permission_denied` を返す。接続用 client の要求では、指定されたセッションが対象の `edge_device_id` とイベントに属することを確かめる
 
 ## エラー
 
@@ -83,6 +87,7 @@ Service Gateway と同じ Connect エラーコードで返す。外部レスポ�
 |---|---|
 | トークンがない、または無効、期限切れ。`token_use` の不一致。`tenant_id` か `event_id` がない。鍵束縛（`cnf`）を持つ | unauthenticated |
 | `client_id` が受理する client にない。scope が足りない。役割が RPC に許可されない | permission_denied |
+| edge役のトークン（ESP カメラ、観測ページ）に `edge_device_id` がない。接続用 client の要求に `edge_device_id` か `session_id` がない。セッションが対象のエッジ端末とイベントに属さない | permission_denied |
 | JWKS を取得できない（未知の `kid` の再取得を控えている間を含む） | unavailable |
 | `RequestConnection` の `edge_device_id` が空 | invalid_argument |
 
@@ -92,18 +97,19 @@ Service Gateway と同じ Connect エラーコードで返す。外部レスポ�
 
 - シグナリング文書は次のパスに置く。`tenantId`、`eventId`、`edgeDeviceId` は公開 ID である
   `tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}/signals/{signalId}`
-- 待ち受け側（edge 役）はエッジ端末の観測ページの client、接続要求側（console 役）は管理 UI の client とする。本サービスは、検証した `client_id` を受理する client の設定と突き合わせて役割を決める
-- カスタムトークンのクレームは前節のとおりとする。`edge_device_id` はクレームに含めない
+- 待ち受け側（edge 役）は観測ページの client と ESP カメラの client、接続要求側（console 役）は管理 UI と観測ページの接続用 client とする。本サービスは、検証した `client_id` を受理する client の設定と突き合わせて役割を決める
+- カスタムトークンのクレームは前節のとおりとする。ESP カメラと観測ページのedge用トークンは `edge_device_id`、接続用 client のトークンは `edge_device_id` と `session_id` を持つ。管理 UI のconsole用トークンはこれらを持たない
 - セッション文書は、本サービスが接続要求を受け付けたときに作る（Admin SDK）。接続要求は console 役だけが行え、tenant と event はリクエストではなく `event_access` から取る
 - signals は、`from`（送り手の役割）、`payload`（SDP または ICE 候補）、`createdAt` を持つ文書として追記する
 - セキュリティルールは、パスの `tenantId` と `eventId` がクレームと一致すること、クレームの `token_use` が `signaling` であること、`request.time` がクレームの `expires_at` より前であることをすべての許可の条件とし、そのうえで次を許す。これ以外のパスと操作は拒否し、コレクショングループクエリも許可しない
+  クレームに `edge_device_id` がある場合は、パスの `edgeDeviceId` と一致することを条件に加える。クレームに `session_id` がある場合は、パスの `sessionId` と一致することを条件に加える
 
 | 対象 | 読み取り | 作成 | 更新 | 削除 |
 |---|---|---|---|---|
 | sessions | edge 役、console 役 | なし（本サービスの Admin SDK のみ） | なし | console 役 |
 | signals | edge 役、console 役 | edge 役、console 役。`from` が自分の役割と一致し、フィールドが `from`、`payload`、`createdAt` に限られ、`createdAt` が書き込み時刻であること | なし | console 役 |
 
-- edge 役は同じイベントのどのエッジ端末のパスにも読み書きできる。`edge_device_id` は資格情報ではないため、同じイベント内での端末のなりすましは防がない。影響はそのイベントの範囲に閉じる
+  ESP カメラと観測ページのedge用トークンは `edge_device_id` を持ち、自分のエッジ端末のパスに限る。接続用 client の console トークンは `edge_device_id` と `session_id` を持ち、対象セッションに限る。管理 UI のconsole用トークンは `edge_device_id` を持たず、イベント全体のsessions/signalsを扱う
 
 ## 未策定の事項
 
@@ -119,9 +125,9 @@ package tolo.edgebridge.v1;
 import "google/protobuf/timestamp.proto";
 
 service SignalingService {
-  // 管理 UI → 本サービス。console 役のみ
+  // 管理 UI、観測ページの接続用 client → 本サービス。console 役のみ
   rpc RequestConnection(RequestConnectionRequest) returns (RequestConnectionResponse);
-  // 管理 UI、観測ページ → 本サービス。edge 役、console 役
+  // 管理 UI、観測ページ、観測ページの接続用 client、ESP カメラ → 本サービス。edge 役、console 役
   rpc IssueFirestoreToken(IssueFirestoreTokenRequest) returns (IssueFirestoreTokenResponse);
 }
 
@@ -133,7 +139,10 @@ message RequestConnectionResponse {
 }
 
 // tenant と event は event_access から取る
-message IssueFirestoreTokenRequest {}
+message IssueFirestoreTokenRequest {
+  string edge_device_id = 1;  // 接続用 client のとき必須。edge役（ESP カメラ、観測ページ）は event_access のクレームから取る
+  string session_id = 2;      // 接続用 client のとき必須。対象セッションにトークンを束縛する
+}
 message IssueFirestoreTokenResponse {
   string firebase_custom_token = 1;  // Firebase Auth の signInWithCustomToken に渡す
   google.protobuf.Timestamp expires_at = 2;  // クレームの expires_at と同じ時刻
