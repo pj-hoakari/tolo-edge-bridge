@@ -113,7 +113,11 @@ func (x *RequestConnectionResponse) GetSessionId() string {
 }
 
 type IssueFirestoreTokenRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 接続用 client のとき必須。edge 役（ESP カメラ、観測ページ）は event_access のクレームから取る。
+	EdgeDeviceId string `protobuf:"bytes,1,opt,name=edge_device_id,json=edgeDeviceId,proto3" json:"edge_device_id,omitempty"`
+	// 接続用 client のとき必須。対象セッションにトークンを束縛する。
+	SessionId     string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -146,6 +150,20 @@ func (x *IssueFirestoreTokenRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use IssueFirestoreTokenRequest.ProtoReflect.Descriptor instead.
 func (*IssueFirestoreTokenRequest) Descriptor() ([]byte, []int) {
 	return file_tolo_edgebridge_v1_signaling_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *IssueFirestoreTokenRequest) GetEdgeDeviceId() string {
+	if x != nil {
+		return x.EdgeDeviceId
+	}
+	return ""
+}
+
+func (x *IssueFirestoreTokenRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
 }
 
 type IssueFirestoreTokenResponse struct {
@@ -209,8 +227,11 @@ const file_tolo_edgebridge_v1_signaling_proto_rawDesc = "" +
 	"\x0eedge_device_id\x18\x01 \x01(\tR\fedgeDeviceId\":\n" +
 	"\x19RequestConnectionResponse\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\x1c\n" +
-	"\x1aIssueFirestoreTokenRequest\"\x8c\x01\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"a\n" +
+	"\x1aIssueFirestoreTokenRequest\x12$\n" +
+	"\x0eedge_device_id\x18\x01 \x01(\tR\fedgeDeviceId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\"\x8c\x01\n" +
 	"\x1bIssueFirestoreTokenResponse\x122\n" +
 	"\x15firebase_custom_token\x18\x01 \x01(\tR\x13firebaseCustomToken\x129\n" +
 	"\n" +

@@ -55,3 +55,18 @@ func (mr *MockEdgeRepositoryMockRecorder) CreateSession(ctx, tenantID, eventID, 
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateSession", reflect.TypeOf((*MockEdgeRepository)(nil).CreateSession), ctx, tenantID, eventID, edgeID)
 }
+
+// SessionExists mocks base method.
+func (m *MockEdgeRepository) SessionExists(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID, sessionID domain.SessionID) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SessionExists", ctx, tenantID, eventID, edgeID, sessionID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// SessionExists indicates an expected call of SessionExists.
+func (mr *MockEdgeRepositoryMockRecorder) SessionExists(ctx, tenantID, eventID, edgeID, sessionID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SessionExists", reflect.TypeOf((*MockEdgeRepository)(nil).SessionExists), ctx, tenantID, eventID, edgeID, sessionID)
+}

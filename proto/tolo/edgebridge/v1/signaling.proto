@@ -25,7 +25,12 @@ message RequestConnectionResponse {
   string session_id = 1;
 }
 
-message IssueFirestoreTokenRequest {}
+message IssueFirestoreTokenRequest {
+  // 接続用 client のとき必須。edge 役（ESP カメラ、観測ページ）は event_access のクレームから取る。
+  string edge_device_id = 1;
+  // 接続用 client のとき必須。対象セッションにトークンを束縛する。
+  string session_id = 2;
+}
 
 message IssueFirestoreTokenResponse {
   string firebase_custom_token = 1;

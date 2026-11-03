@@ -1,4 +1,4 @@
-desc: fakeidp の event_access で RequestConnection と IssueFirestoreToken の認証・認可、Firestore への書き込み、カスタムトークンでのサインイン、セキュリティルールを確かめる
+desc: fakeidp の event_access で RequestConnection と IssueFirestoreToken の認証・認可、edge_device_id と session_id の束縛、Firestore への書き込み、カスタムトークンでのサインイン、セキュリティルールを確かめる
 runners:
   bridge: http://server:8080
   idp: http://fakeidp:8080
@@ -8,6 +8,8 @@ vars:
   documents: /v1/projects/demo-tolo/databases/(default)/documents
   tenantId: 0123456789abcdef
   eventId: fedcba9876543210
+  edgeId: "0011223344556677"
+  otherEdgeId: 8899aabbccddeeff
 steps:
   waitServer:
     loop:
@@ -53,11 +55,11 @@ steps:
             Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
           body:
             application/json:
-              edgeDeviceId: edge-1
+              edgeDeviceId: "{{ vars.edgeId }}"
     test: current.res.status == 200 && current.res.body.sessionId != ""
   session:
     firestore:
-      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/{{ vars.edgeId }}/sessions/{{ steps.requestConnection.res.body.sessionId }}":
         get:
           headers:
             Authorization: Bearer owner
@@ -65,13 +67,33 @@ steps:
       current.res.status == 200
       && current.res.body.fields.status.stringValue == "requested"
       && "timestampValue" in current.res.body.fields.createdAt
+  requestConnectionOtherEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.otherEdgeId }}"
+    test: current.res.status == 200 && current.res.body.sessionId != ""
+  requestConnectionSecond:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 200 && current.res.body.sessionId != ""
   noToken:
     bridge:
       /tolo.edgebridge.v1.SignalingService/RequestConnection:
         post:
           body:
             application/json:
-              edgeDeviceId: edge-1
+              edgeDeviceId: "{{ vars.edgeId }}"
     test: current.res.status == 401 && current.res.body.code == "unauthenticated" && current.res.body.message == "unauthenticated"
   edgeToken:
     idp:
@@ -85,6 +107,7 @@ steps:
               scope: events.report
               tenant_id: "{{ vars.tenantId }}"
               event_id: "{{ vars.eventId }}"
+              edge_device_id: "{{ vars.edgeId }}"
     test: current.res.status == 200
   edgeRole:
     bridge:
@@ -94,8 +117,71 @@ steps:
             Authorization: "Bearer {{ steps.edgeToken.res.body.access_token }}"
           body:
             application/json:
-              edgeDeviceId: edge-1
+              edgeDeviceId: "{{ vars.edgeId }}"
     test: current.res.status == 403 && current.res.body.code == "permission_denied" && current.res.body.message == "permission denied"
+  cameraToken:
+    idp:
+      /token:
+        post:
+          body:
+            application/json:
+              token_use: event_access
+              sub: user-camera
+              client_id: esp-camera
+              scope: events.stream
+              tenant_id: "{{ vars.tenantId }}"
+              event_id: "{{ vars.eventId }}"
+              edge_device_id: "{{ vars.edgeId }}"
+    test: current.res.status == 200
+  cameraRequestConnection:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.cameraToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  edgeTokenWithoutEdge:
+    idp:
+      /token:
+        post:
+          body:
+            application/json:
+              token_use: event_access
+              sub: user-edge
+              client_id: edge-page
+              scope: events.report
+              tenant_id: "{{ vars.tenantId }}"
+              event_id: "{{ vars.eventId }}"
+    test: current.res.status == 200
+  cameraTokenWithoutEdge:
+    idp:
+      /token:
+        post:
+          body:
+            application/json:
+              token_use: event_access
+              sub: user-camera
+              client_id: esp-camera
+              scope: events.stream
+              tenant_id: "{{ vars.tenantId }}"
+              event_id: "{{ vars.eventId }}"
+    test: current.res.status == 200
+  connectionToken:
+    idp:
+      /token:
+        post:
+          body:
+            application/json:
+              token_use: event_access
+              sub: user-connection
+              client_id: observation-connection
+              scope: events.read
+              tenant_id: "{{ vars.tenantId }}"
+              event_id: "{{ vars.eventId }}"
+    test: current.res.status == 200
   unknownClientToken:
     idp:
       /token:
@@ -117,7 +203,7 @@ steps:
             Authorization: "Bearer {{ steps.unknownClientToken.res.body.access_token }}"
           body:
             application/json:
-              edgeDeviceId: edge-1
+              edgeDeviceId: "{{ vars.edgeId }}"
     test: current.res.status == 403 && current.res.body.code == "permission_denied"
   emptyEdgeId:
     bridge:
@@ -135,6 +221,33 @@ steps:
         post:
           headers:
             Authorization: "Bearer {{ steps.edgeToken.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  issueEdgeWithoutEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.edgeTokenWithoutEdge.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueCameraWithoutEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.cameraTokenWithoutEdge.res.body.access_token }}"
+          body:
+            application/json: {}
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueCameraToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.cameraToken.res.body.access_token }}"
           body:
             application/json: {}
     test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
@@ -158,8 +271,34 @@ steps:
       && edgeClaims.tenant_id == vars.tenantId
       && edgeClaims.event_id == vars.eventId
       && edgeClaims.peer_role == "edge"
+      && edgeClaims.edge_device_id == vars.edgeId
+      && !("session_id" in edgeClaims)
       && edgeClaims.token_use == "signaling"
       && edgeClaims.expires_at == date(steps.issueEdgeToken.res.body.expiresAt).Unix()
+  signInCamera:
+    auth:
+      /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
+        post:
+          body:
+            application/json:
+              token: "{{ steps.issueCameraToken.res.body.firebaseCustomToken }}"
+              returnSecureToken: true
+    test: current.res.status == 200 && current.res.body.idToken != ""
+    bind:
+      cameraIDTokenPayload: replace(replace(split(current.res.body.idToken, ".")[1], "-", "+"), "_", "/")
+  cameraIDTokenClaims:
+    bind:
+      cameraClaims: fromJSON(fromBase64(cameraIDTokenPayload + repeat("=", (4 - len(cameraIDTokenPayload) % 4) % 4)))
+  cameraIDToken:
+    test: |
+      cameraClaims.sub == "user-camera"
+      && cameraClaims.tenant_id == vars.tenantId
+      && cameraClaims.event_id == vars.eventId
+      && cameraClaims.peer_role == "edge"
+      && cameraClaims.edge_device_id == vars.edgeId
+      && !("session_id" in cameraClaims)
+      && cameraClaims.token_use == "signaling"
+      && cameraClaims.expires_at == date(steps.issueCameraToken.res.body.expiresAt).Unix()
   issueConsoleToken:
     bridge:
       /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
@@ -169,6 +308,59 @@ steps:
           body:
             application/json: {}
     test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  issueConnectionToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  issueConnectionMissingEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConnectionMissingSession:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConnectionUnknownSession:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+              sessionId: "00000000000000000000"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConnectionWrongEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.otherEdgeId }}"
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
   signInConsole:
     auth:
       /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
@@ -189,8 +381,34 @@ steps:
       && consoleClaims.tenant_id == vars.tenantId
       && consoleClaims.event_id == vars.eventId
       && consoleClaims.peer_role == "console"
+      && !("edge_device_id" in consoleClaims)
+      && !("session_id" in consoleClaims)
       && consoleClaims.token_use == "signaling"
       && consoleClaims.expires_at == date(steps.issueConsoleToken.res.body.expiresAt).Unix()
+  signInConnection:
+    auth:
+      /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
+        post:
+          body:
+            application/json:
+              token: "{{ steps.issueConnectionToken.res.body.firebaseCustomToken }}"
+              returnSecureToken: true
+    test: current.res.status == 200 && current.res.body.idToken != ""
+    bind:
+      connectionIDTokenPayload: replace(replace(split(current.res.body.idToken, ".")[1], "-", "+"), "_", "/")
+  connectionIDTokenClaims:
+    bind:
+      connectionClaims: fromJSON(fromBase64(connectionIDTokenPayload + repeat("=", (4 - len(connectionIDTokenPayload) % 4) % 4)))
+  connectionIDToken:
+    test: |
+      connectionClaims.sub == "user-connection"
+      && connectionClaims.tenant_id == vars.tenantId
+      && connectionClaims.event_id == vars.eventId
+      && connectionClaims.peer_role == "console"
+      && connectionClaims.edge_device_id == vars.edgeId
+      && connectionClaims.session_id == steps.requestConnection.res.body.sessionId
+      && connectionClaims.token_use == "signaling"
+      && connectionClaims.expires_at == date(steps.issueConnectionToken.res.body.expiresAt).Unix()
   issueTokenWithoutToken:
     bridge:
       /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
@@ -209,10 +427,16 @@ steps:
     test: current.res.status == 403 && current.res.body.code == "permission_denied"
   sessionRefs:
     bind:
-      sessionURL: vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/edge-1/sessions/" + steps.requestConnection.res.body.sessionId
-      sessionName: trimPrefix(vars.documents, "/v1/") + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/edge-1/sessions/" + steps.requestConnection.res.body.sessionId
+      sessionURL: vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.edgeId + "/sessions/" + steps.requestConnection.res.body.sessionId
+      sessionName: trimPrefix(vars.documents, "/v1/") + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.edgeId + "/sessions/" + steps.requestConnection.res.body.sessionId
+      secondSessionURL: vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.edgeId + "/sessions/" + steps.requestConnectionSecond.res.body.sessionId
+      secondSessionName: trimPrefix(vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.edgeId + "/sessions/" + steps.requestConnectionSecond.res.body.sessionId, "/v1/")
+      otherEdgeSessionURL: vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.otherEdgeId + "/sessions/" + steps.requestConnectionOtherEdge.res.body.sessionId
+      otherEdgeSessionName: trimPrefix(vars.documents + "/tenants/" + vars.tenantId + "/events/" + vars.eventId + "/edgeDevices/" + vars.otherEdgeId + "/sessions/" + steps.requestConnectionOtherEdge.res.body.sessionId, "/v1/")
       edgeIDToken: steps.signInEdge.res.body.idToken
+      cameraIDToken: steps.signInCamera.res.body.idToken
       consoleIDToken: steps.signInConsole.res.body.idToken
+      connectionIDToken: steps.signInConnection.res.body.idToken
       expiredIDToken: |
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"expires_at": 1}))), "+", "-"), "/", "_"), "=") + "."
       deliveryNotificationIDToken: |
@@ -231,13 +455,55 @@ steps:
           headers:
             Authorization: "Bearer {{ consoleIDToken }}"
     test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadCamera:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ cameraIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadConnection:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadCameraOtherEdge:
+    firestore:
+      "{{ otherEdgeSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ cameraIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadConnectionOtherEdge:
+    firestore:
+      "{{ otherEdgeSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadConnectionOtherSession:
+    firestore:
+      "{{ secondSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionReadConsoleOtherEdge:
+    firestore:
+      "{{ otherEdgeSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
   sessionsListEdge:
     firestore:
-      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions":
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/{{ vars.edgeId }}/sessions":
         get:
           headers:
             Authorization: "Bearer {{ edgeIDToken }}"
-    test: current.res.status == 200 && len(current.res.body.documents) == 1
+    test: current.res.status == 200 && len(current.res.body.documents) == 2
   sessionReadNoAuth:
     firestore:
       "{{ sessionURL }}":
@@ -259,21 +525,21 @@ steps:
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   sessionReadOtherTenant:
     firestore:
-      "{{ vars.documents }}/tenants/other-tenant/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+      "{{ vars.documents }}/tenants/other-tenant/events/{{ vars.eventId }}/edgeDevices/{{ vars.edgeId }}/sessions/{{ steps.requestConnection.res.body.sessionId }}":
         get:
           headers:
             Authorization: "Bearer {{ consoleIDToken }}"
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   sessionReadOtherEvent:
     firestore:
-      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/other-event/edgeDevices/edge-1/sessions/{{ steps.requestConnection.res.body.sessionId }}":
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/other-event/edgeDevices/{{ vars.edgeId }}/sessions/{{ steps.requestConnection.res.body.sessionId }}":
         get:
           headers:
             Authorization: "Bearer {{ consoleIDToken }}"
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   sessionCreateConsole:
     firestore:
-      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/edge-1/sessions/client-made":
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/{{ vars.edgeId }}/sessions/client-made":
         patch:
           headers:
             Authorization: "Bearer {{ consoleIDToken }}"
@@ -484,6 +750,100 @@ steps:
           headers:
             Authorization: "Bearer {{ edgeIDToken }}"
     test: current.res.status == 200 && len(current.res.body.documents) == 2
+  signalCreateCamera:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ cameraIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/camera-offer"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 200
+  signalCreateConnection:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/connection-answer"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: answer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 200
+  signalCreateConnectionOtherSession:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ secondSessionName }}/signals/connection-other-session"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        stringValue: answer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalCreateConnectionOtherEdge:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ otherEdgeSessionName }}/signals/connection-other-edge"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        stringValue: answer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   signalsCollectionGroupConsole:
     firestore:
       "{{ vars.documents }}:runQuery":
@@ -504,6 +864,20 @@ steps:
           headers:
             Authorization: "Bearer {{ edgeIDToken }}"
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  signalDeleteConnection:
+    firestore:
+      "{{ sessionURL }}/signals/connection-answer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 200
+  signalDeleteConnectionOtherSession:
+    firestore:
+      "{{ secondSessionURL }}/signals/camera-offer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   signalDeleteConsole:
     firestore:
       "{{ sessionURL }}/signals/console-answer":
@@ -518,9 +892,30 @@ steps:
           headers:
             Authorization: "Bearer {{ edgeIDToken }}"
     test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
-  sessionDeleteConsole:
+  sessionDeleteCamera:
     firestore:
       "{{ sessionURL }}":
+        delete:
+          headers:
+            Authorization: "Bearer {{ cameraIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionDeleteConnectionOtherEdge:
+    firestore:
+      "{{ otherEdgeSessionURL }}":
+        delete:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  sessionDeleteConnection:
+    firestore:
+      "{{ sessionURL }}":
+        delete:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 200
+  sessionDeleteConsole:
+    firestore:
+      "{{ secondSessionURL }}":
         delete:
           headers:
             Authorization: "Bearer {{ consoleIDToken }}"

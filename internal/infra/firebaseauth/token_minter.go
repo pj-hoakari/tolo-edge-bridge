@@ -10,11 +10,13 @@ import (
 )
 
 const (
-	claimTenantID  = "tenant_id"
-	claimEventID   = "event_id"
-	claimPeerRole  = "peer_role"
-	claimExpiresAt = "expires_at"
-	claimTokenUse  = "token_use"
+	claimTenantID     = "tenant_id"
+	claimEventID      = "event_id"
+	claimPeerRole     = "peer_role"
+	claimEdgeDeviceID = "edge_device_id"
+	claimSessionID    = "session_id"
+	claimExpiresAt    = "expires_at"
+	claimTokenUse     = "token_use"
 
 	tokenUseSignaling = "signaling"
 )
@@ -28,13 +30,23 @@ func NewTokenMinter(client *auth.Client) *TokenMinter {
 }
 
 func (m *TokenMinter) Mint(ctx context.Context, access domain.FirestoreAccess) (string, error) {
-	token, err := m.client.CustomTokenWithClaims(ctx, access.Subject, map[string]any{
+	claims := map[string]any{
 		claimTenantID:  string(access.TenantID),
 		claimEventID:   string(access.EventID),
 		claimPeerRole:  string(access.Role),
 		claimExpiresAt: access.ExpiresAt.Unix(),
 		claimTokenUse:  tokenUseSignaling,
-	})
+	}
+
+	if access.EdgeDeviceID != "" {
+		claims[claimEdgeDeviceID] = string(access.EdgeDeviceID)
+	}
+
+	if access.SessionID != "" {
+		claims[claimSessionID] = string(access.SessionID)
+	}
+
+	token, err := m.client.CustomTokenWithClaims(ctx, access.Subject, claims)
 	if err != nil {
 		return "", fmt.Errorf("create custom token: %w", err)
 	}

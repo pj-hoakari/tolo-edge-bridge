@@ -33,12 +33,16 @@ import (
 )
 
 const (
-	testIssuer      = "https://idp.example.test"
-	testAudience    = "backend-api"
-	consoleClientID = "console-ui"
-	edgeClientID    = "edge-page"
-	testTenantID    = "0123456789abcdef"
-	testEventID     = "fedcba9876543210"
+	testIssuer         = "https://idp.example.test"
+	testAudience       = "backend-api"
+	consoleClientID    = "console-ui"
+	edgeClientID       = "edge-page"
+	cameraClientID     = "esp-camera"
+	connectionClientID = "observation-connection"
+	testTenantID       = "0123456789abcdef"
+	testEventID        = "fedcba9876543210"
+	testEdgeID         = "0011223344556677"
+	testSessionID      = "sess-1"
 )
 
 type testIdP struct {
@@ -215,7 +219,12 @@ func newTestServerWith(t *testing.T, service *application.SignalingService, idp 
 		t.Fatalf("NewVerifier() error = %v", err)
 	}
 
-	authenticator, err := authn.New(verifier, map[string]domain.PeerRole{consoleClientID: domain.PeerRoleConsole, edgeClientID: domain.PeerRoleEdge})
+	authenticator, err := authn.New(verifier, map[string]authn.Client{
+		consoleClientID:    {Role: domain.PeerRoleConsole},
+		edgeClientID:       {Role: domain.PeerRoleEdge},
+		cameraClientID:     {Role: domain.PeerRoleEdge},
+		connectionClientID: {Role: domain.PeerRoleConsole, Connection: true},
+	})
 	if err != nil {
 		t.Fatalf("authn.New() error = %v", err)
 	}
@@ -285,6 +294,7 @@ func TestRoutesRejectTokens(t *testing.T) {
 		{name: "wrong token use", mutate: func(c jwt.MapClaims) { c["token_use"] = "tenant_access" }, want: connectrpc.CodeUnauthenticated},
 		{name: "missing tenant id", mutate: func(c jwt.MapClaims) { delete(c, "tenant_id") }, want: connectrpc.CodeUnauthenticated},
 		{name: "missing event id", mutate: func(c jwt.MapClaims) { delete(c, "event_id") }, want: connectrpc.CodeUnauthenticated},
+		{name: "invalid edge device id", mutate: func(c jwt.MapClaims) { c["edge_device_id"] = "edge-1" }, want: connectrpc.CodeUnauthenticated},
 		{name: "key bound", mutate: func(c jwt.MapClaims) { c["cnf"] = map[string]any{"jkt": "thumbprint"} }, want: connectrpc.CodeUnauthenticated},
 		{name: "unknown client", mutate: func(c jwt.MapClaims) { c["client_id"] = "other-client" }, want: connectrpc.CodePermissionDenied},
 		{name: "missing scope", mutate: func(c jwt.MapClaims) { c["scope"] = "events.manage" }, want: connectrpc.CodePermissionDenied},
@@ -472,20 +482,28 @@ func TestServiceWithoutPrincipalIsUnauthenticated(t *testing.T) {
 func issueFirestoreToken(t *testing.T, server *httptest.Server, token string) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
 	t.Helper()
 
+	return issueFirestoreTokenWith(t, server, token, &edgebridgev1.IssueFirestoreTokenRequest{})
+}
+
+func issueFirestoreTokenWith(t *testing.T, server *httptest.Server, token string, req *edgebridgev1.IssueFirestoreTokenRequest) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
+	t.Helper()
+
 	client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
 
-	return client.IssueFirestoreToken(withToken(context.Background(), token), &edgebridgev1.IssueFirestoreTokenRequest{})
+	return client.IssueFirestoreToken(withToken(context.Background(), token), req)
 }
 
 func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name     string
-		clientID string
-		role     domain.PeerRole
+		name         string
+		clientID     string
+		role         domain.PeerRole
+		edgeDeviceID string
+		wantEdgeID   domain.EdgeID
 	}{
-		{name: "edge", clientID: edgeClientID, role: domain.PeerRoleEdge},
+		{name: "edge", clientID: edgeClientID, role: domain.PeerRoleEdge, edgeDeviceID: testEdgeID, wantEdgeID: testEdgeID},
 		{name: "console", clientID: consoleClientID, role: domain.PeerRoleConsole},
 	}
 
@@ -507,7 +525,14 @@ func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
 
 			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), minter), idp)
 
-			res, err := issueFirestoreToken(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = tt.clientID; c["sub"] = "user-" + tt.name }))
+			res, err := issueFirestoreToken(t, server, idp.token(t, func(c jwt.MapClaims) {
+				c["client_id"] = tt.clientID
+				c["sub"] = "user-" + tt.name
+
+				if tt.edgeDeviceID != "" {
+					c["edge_device_id"] = tt.edgeDeviceID
+				}
+			}))
 			if err != nil {
 				t.Fatalf("IssueFirestoreToken() error = %v", err)
 			}
@@ -520,11 +545,187 @@ func TestRoutesIssueFirestoreTokenForEachRole(t *testing.T) {
 				t.Errorf("ExpiresAt = %v, want %v", got, wantExpiresAt)
 			}
 
-			want := domain.FirestoreAccess{Subject: "user-" + tt.name, TenantID: testTenantID, EventID: testEventID, Role: tt.role, ExpiresAt: wantExpiresAt}
-			if minted.Subject != want.Subject || minted.TenantID != want.TenantID || minted.EventID != want.EventID || minted.Role != want.Role || !minted.ExpiresAt.Equal(want.ExpiresAt) {
+			want := domain.FirestoreAccess{Subject: "user-" + tt.name, TenantID: testTenantID, EventID: testEventID, Role: tt.role, EdgeDeviceID: tt.wantEdgeID, ExpiresAt: wantExpiresAt}
+			if minted.Subject != want.Subject || minted.TenantID != want.TenantID || minted.EventID != want.EventID || minted.Role != want.Role || minted.EdgeDeviceID != want.EdgeDeviceID || minted.SessionID != want.SessionID || !minted.ExpiresAt.Equal(want.ExpiresAt) {
 				t.Errorf("minted access = %+v, want %+v", minted, want)
 			}
 		})
+	}
+}
+
+func TestRoutesIssueFirestoreTokenForCameraWithEventsStream(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+
+	var minted domain.FirestoreAccess
+
+	minter := newTestMinter(t)
+	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, access domain.FirestoreAccess) (string, error) {
+		minted = access
+
+		return "custom-token", nil
+	})
+
+	server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), minter), idp)
+
+	_, err := issueFirestoreToken(t, server, idp.token(t, func(c jwt.MapClaims) {
+		c["client_id"] = cameraClientID
+		c["scope"] = "events.stream"
+		c["edge_device_id"] = testEdgeID
+	}))
+	if err != nil {
+		t.Fatalf("IssueFirestoreToken() error = %v", err)
+	}
+
+	if got, want := minted.Role, domain.PeerRoleEdge; got != want {
+		t.Errorf("Role = %q, want %q", got, want)
+	}
+
+	if got, want := minted.EdgeDeviceID, domain.EdgeID(testEdgeID); got != want {
+		t.Errorf("EdgeDeviceID = %q, want %q", got, want)
+	}
+}
+
+func TestRoutesRejectEdgeTokenWithoutEdgeDeviceID(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		clientID string
+		scope    string
+	}{
+		{name: "edge page", clientID: edgeClientID, scope: "events.report"},
+		{name: "camera", clientID: cameraClientID, scope: "events.stream"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			idp := newTestIdP(t)
+			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), newTestMinter(t)), idp)
+
+			_, err := issueFirestoreToken(t, server, idp.token(t, func(c jwt.MapClaims) {
+				c["client_id"] = tt.clientID
+				c["scope"] = tt.scope
+			}))
+			if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
+				t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
+			}
+		})
+	}
+}
+
+func TestRoutesIssueFirestoreTokenForConnectionClient(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	wantExpiresAt := idp.clock().Add(5 * time.Minute)
+
+	var minted domain.FirestoreAccess
+
+	repo := newTestRepository(t)
+	repo.EXPECT().SessionExists(gomock.Any(), domain.TenantID(testTenantID), domain.EventID(testEventID), domain.EdgeID(testEdgeID), domain.SessionID(testSessionID)).Return(true, nil)
+
+	minter := newTestMinter(t)
+	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, access domain.FirestoreAccess) (string, error) {
+		minted = access
+
+		return "custom-token", nil
+	})
+
+	server := newTestServerWith(t, application.NewSignalingService(repo, minter), idp)
+
+	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), &edgebridgev1.IssueFirestoreTokenRequest{
+		EdgeDeviceId: testEdgeID,
+		SessionId:    testSessionID,
+	})
+	if err != nil {
+		t.Fatalf("IssueFirestoreToken() error = %v", err)
+	}
+
+	want := domain.FirestoreAccess{
+		Subject:      "user-1",
+		TenantID:     testTenantID,
+		EventID:      testEventID,
+		Role:         domain.PeerRoleConsole,
+		EdgeDeviceID: testEdgeID,
+		SessionID:    testSessionID,
+		ExpiresAt:    wantExpiresAt,
+	}
+	if minted.Subject != want.Subject || minted.TenantID != want.TenantID || minted.EventID != want.EventID || minted.Role != want.Role || minted.EdgeDeviceID != want.EdgeDeviceID || minted.SessionID != want.SessionID || !minted.ExpiresAt.Equal(want.ExpiresAt) {
+		t.Errorf("minted access = %+v, want %+v", minted, want)
+	}
+}
+
+func TestRoutesRejectConnectionClientWithoutSessionBinding(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		req  *edgebridgev1.IssueFirestoreTokenRequest
+	}{
+		{name: "missing edge", req: &edgebridgev1.IssueFirestoreTokenRequest{SessionId: testSessionID}},
+		{name: "missing session", req: &edgebridgev1.IssueFirestoreTokenRequest{EdgeDeviceId: testEdgeID}},
+		{name: "invalid edge", req: &edgebridgev1.IssueFirestoreTokenRequest{EdgeDeviceId: "edge-1", SessionId: testSessionID}},
+		{name: "invalid session", req: &edgebridgev1.IssueFirestoreTokenRequest{EdgeDeviceId: testEdgeID, SessionId: "not/a/session"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			idp := newTestIdP(t)
+			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), newTestMinter(t)), idp)
+
+			_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), tt.req)
+			if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
+				t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
+			}
+		})
+	}
+}
+
+func TestRoutesRejectConnectionClientForUnknownSession(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+	repo := newTestRepository(t)
+	repo.EXPECT().SessionExists(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil)
+	server := newTestServerWith(t, application.NewSignalingService(repo, newTestMinter(t)), idp)
+
+	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), &edgebridgev1.IssueFirestoreTokenRequest{
+		EdgeDeviceId: testEdgeID,
+		SessionId:    testSessionID,
+	})
+	if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
+		t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
+	}
+}
+
+func TestRoutesManagementConsoleIgnoresBindingFields(t *testing.T) {
+	t.Parallel()
+
+	idp := newTestIdP(t)
+
+	minter := newTestMinter(t)
+	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, access domain.FirestoreAccess) (string, error) {
+		if access.EdgeDeviceID != "" || access.SessionID != "" {
+			t.Errorf("access = %+v, want no edge or session binding", access)
+		}
+
+		return "custom-token", nil
+	})
+
+	server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), minter), idp)
+
+	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = consoleClientID }), &edgebridgev1.IssueFirestoreTokenRequest{
+		EdgeDeviceId: testEdgeID,
+		SessionId:    testSessionID,
+	})
+	if err != nil {
+		t.Fatalf("IssueFirestoreToken() error = %v", err)
 	}
 }
 
@@ -547,7 +748,7 @@ func TestServiceMinterFailureIsInternal(t *testing.T) {
 	minter.EXPECT().Mint(gomock.Any(), gomock.Any()).Return("", errors.New("signBlob denied"))
 	service := NewService(application.NewSignalingService(newTestRepository(t), minter))
 
-	ctx := authn.NewContext(context.Background(), authn.Principal{Subject: "user-1", ClientID: edgeClientID, Role: domain.PeerRoleEdge, TenantID: testTenantID, EventID: testEventID, ExpiresAt: time.Now()})
+	ctx := authn.NewContext(context.Background(), authn.Principal{Subject: "user-1", ClientID: edgeClientID, Role: domain.PeerRoleEdge, TenantID: testTenantID, EventID: testEventID, EdgeDeviceID: testEdgeID, ExpiresAt: time.Now()})
 
 	_, err := service.IssueFirestoreToken(ctx, &edgebridgev1.IssueFirestoreTokenRequest{})
 	if got, want := connectrpc.CodeOf(err), connectrpc.CodeInternal; got != want {

@@ -44,6 +44,7 @@ type Claims struct {
 	Scope        string
 	TenantID     string
 	EventID      string
+	EdgeDeviceID string
 	ExpiresAt    time.Time
 	Confirmation string
 }
@@ -215,6 +216,11 @@ func readClaims(claims jwt.MapClaims) (Claims, error) {
 		return Claims{}, err
 	}
 
+	edgeDeviceID, err := optionalPublicIDClaim(claims, "edge_device_id")
+	if err != nil {
+		return Claims{}, err
+	}
+
 	confirmation, err := readConfirmation(claims)
 	if err != nil {
 		return Claims{}, err
@@ -232,6 +238,7 @@ func readClaims(claims jwt.MapClaims) (Claims, error) {
 		Scope:        scope,
 		TenantID:     tenantID,
 		EventID:      eventID,
+		EdgeDeviceID: edgeDeviceID,
 		ExpiresAt:    expiresAt.UTC(),
 		Confirmation: confirmation,
 	}, nil
@@ -257,17 +264,36 @@ func readConfirmation(claims jwt.MapClaims) (string, error) {
 }
 
 func publicIDClaim(claims jwt.MapClaims, name string) (string, error) {
-	value, present := claims[name]
+	publicID, present, err := readPublicIDClaim(claims, name)
+	if err != nil {
+		return "", err
+	}
+
 	if !present {
 		return "", fmt.Errorf("%w: %s is missing", ErrInvalidClaims, name)
 	}
 
-	publicID, ok := value.(string)
-	if !ok || !publicIDPattern.MatchString(publicID) {
-		return "", fmt.Errorf("%w: %s is not a 16 digit lowercase hex public ID", ErrInvalidClaims, name)
+	return publicID, nil
+}
+
+func optionalPublicIDClaim(claims jwt.MapClaims, name string) (string, error) {
+	publicID, _, err := readPublicIDClaim(claims, name)
+
+	return publicID, err
+}
+
+func readPublicIDClaim(claims jwt.MapClaims, name string) (string, bool, error) {
+	value, present := claims[name]
+	if !present {
+		return "", false, nil
 	}
 
-	return publicID, nil
+	publicID, ok := value.(string)
+	if !ok || !publicIDPattern.MatchString(publicID) {
+		return "", true, fmt.Errorf("%w: %s is not a 16 digit lowercase hex public ID", ErrInvalidClaims, name)
+	}
+
+	return publicID, true, nil
 }
 
 func stringClaim(claims jwt.MapClaims, name string) (string, error) {

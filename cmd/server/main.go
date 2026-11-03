@@ -35,17 +35,21 @@ const (
 )
 
 const (
-	envIDPIssuer       = "IDP_ISSUER"
-	envIDPAudience     = "IDP_AUDIENCE"
-	envIDPJWKSURL      = "IDP_JWKS_URL"
-	envConsoleClientID = "CONSOLE_CLIENT_ID"
-	envEdgeClientID    = "EDGE_CLIENT_ID"
+	envIDPIssuer              = "IDP_ISSUER"
+	envIDPAudience            = "IDP_AUDIENCE"
+	envIDPJWKSURL             = "IDP_JWKS_URL"
+	envConsoleClientID        = "CONSOLE_CLIENT_ID"
+	envEdgeClientID           = "EDGE_CLIENT_ID"
+	envCameraClientID         = "CAMERA_CLIENT_ID"
+	envConnectionClientID     = "CONNECTION_CLIENT_ID"
+	defaultCameraClientID     = "esp-camera"
+	defaultConnectionClientID = "observation-connection"
 )
 
 var (
 	errFirestoreProjectIDRequired = errors.New("FIRESTORE_PROJECT_ID is required")
 	errEnvRequired                = errors.New("required environment variable is not set")
-	errClientIDsCollide           = errors.New(envConsoleClientID + " and " + envEdgeClientID + " must differ")
+	errClientIDsCollide           = errors.New("client ID environment variables must all differ")
 )
 
 func main() {
@@ -181,8 +185,17 @@ func newAuthenticator() (*authn.Authenticator, error) {
 		}
 	}
 
-	if values[envConsoleClientID] == values[envEdgeClientID] {
-		return nil, errClientIDsCollide
+	values[envCameraClientID] = getenv(envCameraClientID, defaultCameraClientID)
+	values[envConnectionClientID] = getenv(envConnectionClientID, defaultConnectionClientID)
+
+	seen := make(map[string]string, 4)
+
+	for _, key := range []string{envConsoleClientID, envEdgeClientID, envCameraClientID, envConnectionClientID} {
+		if other, duplicate := seen[values[key]]; duplicate {
+			return nil, fmt.Errorf("%w: %s and %s", errClientIDsCollide, other, key)
+		}
+
+		seen[values[key]] = key
 	}
 
 	keys, err := externaltoken.NewKeySet(externaltoken.KeySetConfig{
@@ -212,9 +225,11 @@ func newAuthenticator() (*authn.Authenticator, error) {
 		return nil, fmt.Errorf("build the external token verifier: %w", err)
 	}
 
-	authenticator, err := authn.New(verifier, map[string]domain.PeerRole{
-		values[envConsoleClientID]: domain.PeerRoleConsole,
-		values[envEdgeClientID]:    domain.PeerRoleEdge,
+	authenticator, err := authn.New(verifier, map[string]authn.Client{
+		values[envConsoleClientID]:    {Role: domain.PeerRoleConsole, Connection: false},
+		values[envEdgeClientID]:       {Role: domain.PeerRoleEdge, Connection: false},
+		values[envCameraClientID]:     {Role: domain.PeerRoleEdge, Connection: false},
+		values[envConnectionClientID]: {Role: domain.PeerRoleConsole, Connection: true},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("build the authenticator: %w", err)

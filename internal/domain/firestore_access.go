@@ -20,14 +20,16 @@ const (
 )
 
 type FirestoreAccess struct {
-	Subject   string
-	TenantID  TenantID
-	EventID   EventID
-	Role      PeerRole
-	ExpiresAt time.Time
+	Subject      string
+	TenantID     TenantID
+	EventID      EventID
+	Role         PeerRole
+	EdgeDeviceID EdgeID
+	SessionID    SessionID
+	ExpiresAt    time.Time
 }
 
-func NewFirestoreAccess(subject string, tenantID TenantID, eventID EventID, role PeerRole, expiresAt time.Time) (FirestoreAccess, error) {
+func NewFirestoreAccess(subject string, tenantID TenantID, eventID EventID, role PeerRole, edgeDeviceID EdgeID, sessionID SessionID, expiresAt time.Time) (FirestoreAccess, error) {
 	if subject == "" {
 		return FirestoreAccess{}, ErrSubjectRequired
 	}
@@ -49,10 +51,12 @@ func NewFirestoreAccess(subject string, tenantID TenantID, eventID EventID, role
 	}
 
 	return FirestoreAccess{
-		Subject:   subject,
-		TenantID:  tenantID,
-		EventID:   eventID,
-		Role:      role,
-		ExpiresAt: expiresAt.Truncate(time.Second).UTC(),
+		Subject:      subject,
+		TenantID:     tenantID,
+		EventID:      eventID,
+		Role:         role,
+		EdgeDeviceID: edgeDeviceID,
+		SessionID:    sessionID,
+		ExpiresAt:    expiresAt.Truncate(time.Second).UTC(),
 	}, nil
 }

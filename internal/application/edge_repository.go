@@ -10,4 +10,5 @@ import (
 
 type EdgeRepository interface {
 	CreateSession(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID) (domain.SessionID, error)
+	SessionExists(ctx context.Context, tenantID domain.TenantID, eventID domain.EventID, edgeID domain.EdgeID, sessionID domain.SessionID) (bool, error)
 }

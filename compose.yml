@@ -36,6 +36,8 @@ services:
             IDP_JWKS_URL: http://fakeidp:8080/oauth2/jwks
             CONSOLE_CLIENT_ID: console-ui
             EDGE_CLIENT_ID: edge-page
+            CAMERA_CLIENT_ID: esp-camera
+            CONNECTION_CLIENT_ID: observation-connection
         ports:
             - "8080:8080"
         depends_on:
