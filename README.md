@@ -54,6 +54,16 @@ task runn
 
 `task runn` は compose を起動してから `docker compose run --rm -T runn` を実行する
 compose が固定している `fakeidp` のコミットは `edge_device_id` を受け取らないため、tolo-service-gateway の fakeidp が対応したコミットに更新するまでは、runbook は edge の `edge_device_id` を必要とする手順で止まる
+
+未 push の fakeidp 変更を sibling の tolo-service-gateway（`feat/esp32-camera-integration`）からビルドして runbook を通す場合は、ローカル用のオーバーレイを重ねる `task runn:local` を使う
+
+```bash
+task runn:local
+```
+
+`task runn:local` は `compose.local-fakeidp.yml` を追加で指定し、`fakeidp` を `../tolo-service-gateway` からビルドする
+`compose.yml` のリモート pin は standalone 用にそのまま残している
+tolo-service-gateway の fakeidp が `edge_device_id` に対応したコミット（`3526ce2`）を push したら、`compose.yml` の pin をそのコミットへ bump する（bump 後は `compose.local-fakeidp.yml` と `task runn:local` は不要になる）
 runbook はエミュレータのデータを消し、`fakeidp` からトークンを得てから、次を確かめる
 
 - console 役の `event_access` を付けた `RequestConnection` が session ID を返し、トークンの `tenant_id` と `event_id` に従う `tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる

@@ -83,6 +83,12 @@ tasks:
             - docker compose up -d --build --wait
             - docker compose run --rm -T runn
 
+    runn:local:
+        desc: Run the runn scenarios against the Docker Compose stack with fakeidp built from the local tolo-service-gateway.
+        cmds:
+            - docker compose -f compose.yml -f compose.local-fakeidp.yml up -d --build --wait
+            - docker compose -f compose.yml -f compose.local-fakeidp.yml run --rm -T runn
+
     proto:
         desc: Lint proto and regenerate connect-go code for development.
         cmds:
