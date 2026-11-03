@@ -308,6 +308,37 @@ steps:
           body:
             application/json: {}
     test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  issueConsoleBoundToken:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 200 && current.res.body.firebaseCustomToken != "" && current.res.body.expiresAt != ""
+  issueConsoleMissingEdge:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json:
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConsoleMissingSession:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.consoleToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
   issueConnectionToken:
     bridge:
       /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
@@ -385,6 +416,30 @@ steps:
       && !("session_id" in consoleClaims)
       && consoleClaims.token_use == "signaling"
       && consoleClaims.expires_at == date(steps.issueConsoleToken.res.body.expiresAt).Unix()
+  signInConsoleBound:
+    auth:
+      /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
+        post:
+          body:
+            application/json:
+              token: "{{ steps.issueConsoleBoundToken.res.body.firebaseCustomToken }}"
+              returnSecureToken: true
+    test: current.res.status == 200 && current.res.body.idToken != ""
+    bind:
+      consoleBoundIDTokenPayload: replace(replace(split(current.res.body.idToken, ".")[1], "-", "+"), "_", "/")
+  consoleBoundIDTokenClaims:
+    bind:
+      consoleBoundClaims: fromJSON(fromBase64(consoleBoundIDTokenPayload + repeat("=", (4 - len(consoleBoundIDTokenPayload) % 4) % 4)))
+  consoleBoundIDToken:
+    test: |
+      consoleBoundClaims.sub == "user-console"
+      && consoleBoundClaims.tenant_id == vars.tenantId
+      && consoleBoundClaims.event_id == vars.eventId
+      && consoleBoundClaims.peer_role == "console"
+      && consoleBoundClaims.edge_device_id == vars.edgeId
+      && consoleBoundClaims.session_id == steps.requestConnection.res.body.sessionId
+      && consoleBoundClaims.token_use == "signaling"
+      && consoleBoundClaims.expires_at == date(steps.issueConsoleBoundToken.res.body.expiresAt).Unix()
   signInConnection:
     auth:
       /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
@@ -436,6 +491,7 @@ steps:
       edgeIDToken: steps.signInEdge.res.body.idToken
       cameraIDToken: steps.signInCamera.res.body.idToken
       consoleIDToken: steps.signInConsole.res.body.idToken
+      consoleBoundIDToken: steps.signInConsoleBound.res.body.idToken
       connectionIDToken: steps.signInConnection.res.body.idToken
       expiredIDToken: |
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"expires_at": 1}))), "+", "-"), "/", "_"), "=") + "."
@@ -469,6 +525,20 @@ steps:
           headers:
             Authorization: "Bearer {{ connectionIDToken }}"
     test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadConsoleBound:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleBoundIDToken }}"
+    test: current.res.status == 200 && current.res.body.fields.status.stringValue == "requested"
+  sessionReadConsoleBoundOtherSession:
+    firestore:
+      "{{ secondSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleBoundIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   sessionReadCameraOtherEdge:
     firestore:
       "{{ otherEdgeSessionURL }}":

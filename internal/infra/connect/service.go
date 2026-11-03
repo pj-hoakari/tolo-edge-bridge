@@ -105,7 +105,16 @@ func (s *Service) IssueFirestoreToken(ctx context.Context, req *edgebridgev1.Iss
 	edgeDeviceID := principal.EdgeDeviceID
 	sessionID := ""
 
-	if principal.Connection {
+	connection := principal.Connection
+	if !connection && principal.Role == domain.PeerRoleConsole &&
+		(req.GetEdgeDeviceId() != "" || req.GetSessionId() != "") {
+		// The management console token can narrow itself to one camera session.
+		// Supplying only one half is refused by the application layer, which
+		// requires both fields for a bound token.
+		connection = true
+	}
+
+	if connection {
 		edgeDeviceID = req.GetEdgeDeviceId()
 		sessionID = req.GetSessionId()
 	}
@@ -117,7 +126,7 @@ func (s *Service) IssueFirestoreToken(ctx context.Context, req *edgebridgev1.Iss
 		Role:         principal.Role,
 		EdgeDeviceID: edgeDeviceID,
 		SessionID:    sessionID,
-		Connection:   principal.Connection,
+		Connection:   connection,
 		ExpiresAt:    principal.ExpiresAt,
 	})
 	if err != nil {

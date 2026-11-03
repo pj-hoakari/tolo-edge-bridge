@@ -63,8 +63,8 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 - 空の `edge_id` は `invalid_argument` になる
 - 観測ページ、ESP カメラ（`events.stream`）、管理 UI、接続用 client の `event_access` を付けた `IssueFirestoreToken` がカスタムトークンを返し、Auth エミュレータの `signInWithCustomToken` でサインインできる。サインインしたユーザーの uid はトークンの `sub` で、カスタムクレームに `tenant_id`、`event_id`、`peer_role`、`expires_at`、`token_use`（`signaling`）を持ち、`expires_at` はレスポンスの `expires_at` と同じ時刻を指す
 - 観測ページと ESP カメラのトークンは `event_access` の `edge_device_id` をカスタムクレームに写し、`edge_device_id` を欠く edge 役のトークンは `permission_denied` になる
-- 接続用 client の `IssueFirestoreToken` は要求の `edge_device_id` と `session_id` を必須とし、対象セッションが存在してエッジ端末とイベントに属することを確かめる。欠落、形式不正、存在しないセッション、別のエッジ端末のセッションは `permission_denied` になる。管理 UI の console トークンは要求に項目がなくてもイベント全体のトークンを得る
-- 接続用 client のカスタムトークンは `edge_device_id` と `session_id` を持ち、観測ページと ESP カメラのトークンは `edge_device_id` だけを持つ。管理 UI のトークンはどちらも持たない
+- 接続用 client の `IssueFirestoreToken` は要求の `edge_device_id` と `session_id` を必須とし、対象セッションが存在してエッジ端末とイベントに属することを確かめる。欠落、形式不正、存在しないセッション、別のエッジ端末のセッションは `permission_denied` になる。管理 UI の console トークンも、要求に `edge_device_id` と `session_id` の両方があればそのセッションに束縛したトークンを得る。片方だけなら `permission_denied`、どちらもなければ従来どおりイベント全体のトークンを得る
+- 接続用 client と束縛を指定した管理 UI のカスタムトークンは `edge_device_id` と `session_id` を持ち、観測ページと ESP カメラのトークンは `edge_device_id` だけを持つ。束縛を指定しない管理 UI のトークンはどちらも持たない
 - トークンがない `IssueFirestoreToken` は `unauthenticated`、受理しない `client_id` のトークンは `permission_denied` になる
 - サインインで得た ID トークンを Firestore エミュレータの REST API に付けて、セキュリティルールを確かめる。edge 役と console 役は自分のセッションと signals を読め、signals は `from` が自分の役割で、フィールドが `from`、`payload`、`createdAt` だけで、`createdAt` がサーバー時刻（`REQUEST_TIME`）のときだけ作れる。カスタムトークンに `edge_device_id` がある場合はパスの `edgeDeviceId`、`session_id` がある場合はパスの `sessionId` と一致する必要があり、一致しないパスの読み書きと削除は拒否される。管理 UI の console トークンはイベント全体の sessions/signals を扱える。`from` の不一致、余分なフィールド、クライアントが決めた `createdAt`、signals の更新、セッションの作成と更新、edge 役による削除、別の tenant や event のパス、トークンなし、`expires_at` を過ぎたトークン、`token_use` が `signaling` でないトークン、コレクショングループクエリは拒否され、console 役は束縛されたセッションと signals を削除できる
 - `expires_at` を過ぎたトークンはサーバーが発行しないので、runbook が edge 役の ID トークンの claim を写して `expires_at` を過去にした署名なし（`alg: none`）の JWT を作り、エミュレータに渡す。`token_use` が別の値のトークンも同じ方法で作る
@@ -92,7 +92,7 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 | `IDP_ISSUER` | なし（必須） | `event_access` に要求する `iss`。未設定ならサーバーは起動しない |
 | `IDP_AUDIENCE` | なし（必須） | `event_access` に要求する `aud`（バックエンド API 全体の論理 audience。例 `backend-api`。Service Gateway と同じ値） |
 | `IDP_JWKS_URL` | なし（必須） | IdP の JWKS の絶対 HTTP URL。鍵は 5 分キャッシュし、未知の `kid` は 30 秒に 1 回まで即時に再取得する |
-| `CONSOLE_CLIENT_ID` | なし（必須） | console 役（管理 UI）として受理する `client_id`。イベント全体のカスタムトークンを得る |
+| `CONSOLE_CLIENT_ID` | なし（必須） | console 役（管理 UI）として受理する `client_id`。要求に `edge_device_id` と `session_id` の両方を指定したときだけそのセッションに束縛し、指定がなければイベント全体のカスタムトークンを得る |
 | `EDGE_CLIENT_ID` | なし（必須） | edge 役（観測ページ）として受理する `client_id`。`event_access` の `edge_device_id` が必須 |
 | `CAMERA_CLIENT_ID` | `esp-camera` | edge 役（ESP カメラ）として受理する `client_id`。`event_access` の `edge_device_id` が必須 |
 | `CONNECTION_CLIENT_ID` | `observation-connection` | console 役（観測ページの接続用 client）として受理する `client_id`。`IssueFirestoreToken` で `edge_device_id` と `session_id` の両方が必須 |
@@ -107,7 +107,7 @@ runbook はエミュレータのデータを消し、`fakeidp` からトーク�
 ログは標準出力へ 1 行 1 件の JSON で書き出す
 Firestore の認証はクライアントライブラリの Application Default Credentials に従う
 カスタムトークンの署名も Application Default Credentials に従う。サービスアカウントの鍵ファイルがない環境（Cloud Run など）では Admin SDK が IAM の `signBlob` で署名するため、実行サービスアカウントに `roles/iam.serviceAccountTokenCreator` が必要になる。認証情報がなければサーバーは起動しない
-全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。`IssueFirestoreToken` は edge 役と console 役が呼べ、`event_access` の `sub` を uid、`tenant_id`、`event_id`、役割（`peer_role`）、`exp`（`expires_at`、UNIX 秒）、用途（`token_use`、`signaling`）をカスタムクレームに持つ Firebase Auth のカスタムトークンを返す。edge 役では `event_access` の `edge_device_id` を写し、接続用 client では要求の `edge_device_id` と `session_id` を検証して写す。管理 UI の console トークンはどちらも持たない。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
+全 RPC は本文を読む前に `Authorization: Bearer` の `event_access` を検証し、`client_id` から役割を決める。`RequestConnection` は console 役だけが呼べる。`IssueFirestoreToken` は edge 役と console 役が呼べ、`event_access` の `sub` を uid、`tenant_id`、`event_id`、役割（`peer_role`）、`exp`（`expires_at`、UNIX 秒）、用途（`token_use`、`signaling`）をカスタムクレームに持つ Firebase Auth のカスタムトークンを返す。edge 役では `event_access` の `edge_device_id` を写し、接続用 client と束縛を指定した管理 UI の console トークンでは要求の `edge_device_id` と `session_id` を検証して写す。束縛を指定しない管理 UI の console トークンはどちらも持たない。エラーコードは `docs/edge_bridge_spec.md` のエラー節のとおり
 
 ### トレースの確認（Jaeger）
 
