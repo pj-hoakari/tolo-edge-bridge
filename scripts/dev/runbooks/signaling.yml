@@ -181,7 +181,58 @@ steps:
               scope: events.read
               tenant_id: "{{ vars.tenantId }}"
               event_id: "{{ vars.eventId }}"
+              edge_device_id: "{{ vars.edgeId }}"
     test: current.res.status == 200
+  connectionTokenWithoutEdge:
+    idp:
+      /token:
+        post:
+          body:
+            application/json:
+              token_use: event_access
+              sub: user-connection
+              client_id: observation-connection
+              scope: events.read
+              tenant_id: "{{ vars.tenantId }}"
+              event_id: "{{ vars.eventId }}"
+    test: current.res.status == 200
+  requestConnectionClient:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 200 && current.res.body.sessionId != ""
+  deleteConnectionClientSession:
+    firestore:
+      "{{ vars.documents }}/tenants/{{ vars.tenantId }}/events/{{ vars.eventId }}/edgeDevices/{{ vars.edgeId }}/sessions/{{ steps.requestConnectionClient.res.body.sessionId }}":
+        delete:
+          headers:
+            Authorization: Bearer owner
+    test: current.res.status == 200
+  requestConnectionWithoutClaim:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionTokenWithoutEdge.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  requestConnectionOtherCamera:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/RequestConnection:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.otherEdgeId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
   unknownClientToken:
     idp:
       /token:
@@ -392,6 +443,28 @@ steps:
               edgeDeviceId: "{{ vars.otherEdgeId }}"
               sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
     test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConnectionOtherCamera:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionToken.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.otherEdgeId }}"
+              sessionId: "{{ steps.requestConnectionOtherEdge.res.body.sessionId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
+  issueConnectionWithoutClaim:
+    bridge:
+      /tolo.edgebridge.v1.SignalingService/IssueFirestoreToken:
+        post:
+          headers:
+            Authorization: "Bearer {{ steps.connectionTokenWithoutEdge.res.body.access_token }}"
+          body:
+            application/json:
+              edgeDeviceId: "{{ vars.edgeId }}"
+              sessionId: "{{ steps.requestConnection.res.body.sessionId }}"
+    test: current.res.status == 403 && current.res.body.code == "permission_denied"
   signInConsole:
     auth:
       /identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=any:
@@ -493,6 +566,9 @@ steps:
       consoleIDToken: steps.signInConsole.res.body.idToken
       consoleBoundIDToken: steps.signInConsoleBound.res.body.idToken
       connectionIDToken: steps.signInConnection.res.body.idToken
+      # The unbound console claims supply the legacy shape; only the role changes.
+      legacyEdgeIDToken: |
+        "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(consoleClaims, {"peer_role": "edge"}))), "+", "-"), "/", "_"), "=") + "."
       expiredIDToken: |
         "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0." + trim(replace(replace(toBase64(toJSON(merge(edgeClaims, {"expires_at": 1}))), "+", "-"), "/", "_"), "=") + "."
       deliveryNotificationIDToken: |
@@ -681,6 +757,31 @@ steps:
                   currentDocument:
                     exists: false
     test: current.res.status == 200
+  signalCreateConsoleOtherEdge:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ otherEdgeSessionName }}/signals/edge-offer"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 200
   signalReadAdmin:
     firestore:
       "{{ sessionURL }}/signals/edge-offer":
@@ -693,6 +794,84 @@ steps:
       && current.res.body.fields.payload.mapValue.fields.type.stringValue == "offer"
       && "timestampValue" in current.res.body.fields.createdAt
       && len(current.res.body.fields) == 3
+  legacyEdgeReadSessionOwnCamera:
+    firestore:
+      "{{ sessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  legacyEdgeReadSignalOwnCamera:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  legacyEdgeCreateSignalOwnCamera:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/legacy-offer"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  legacyEdgeReadSessionOtherCamera:
+    firestore:
+      "{{ otherEdgeSessionURL }}":
+        get:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  legacyEdgeReadSignalOtherCamera:
+    firestore:
+      "{{ otherEdgeSessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  legacyEdgeCreateSignalOtherCamera:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ legacyEdgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ otherEdgeSessionName }}/signals/legacy-offer"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
   signalCreateWrongFrom:
     firestore:
       "{{ vars.documents }}:commit":
@@ -997,3 +1176,148 @@ steps:
           headers:
             Authorization: Bearer owner
     test: current.res.status == 404
+  orphanSignalExistsAdmin:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: Bearer owner
+    test: current.res.status == 200
+  orphanSignalReadEdge:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalListEdge:
+    firestore:
+      "{{ sessionURL }}/signals":
+        get:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalDeleteEdge:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalCreateEdge:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ edgeIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/orphan-edge"
+                    fields:
+                      from:
+                        stringValue: edge
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalReadConsole:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalListConsole:
+    firestore:
+      "{{ sessionURL }}/signals":
+        get:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalDeleteConsole:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalCreateConsole:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ consoleIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/orphan-console"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalReadConnection:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        get:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalListConnection:
+    firestore:
+      "{{ sessionURL }}/signals":
+        get:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalDeleteConnection:
+    firestore:
+      "{{ sessionURL }}/signals/edge-offer":
+        delete:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"
+  orphanSignalCreateConnection:
+    firestore:
+      "{{ vars.documents }}:commit":
+        post:
+          headers:
+            Authorization: "Bearer {{ connectionIDToken }}"
+          body:
+            application/json:
+              writes:
+                - update:
+                    name: "{{ sessionName }}/signals/orphan-connection"
+                    fields:
+                      from:
+                        stringValue: console
+                      payload:
+                        mapValue:
+                          fields:
+                            type:
+                              stringValue: offer
+                  updateTransforms:
+                    - fieldPath: createdAt
+                      setToServerValue: REQUEST_TIME
+                  currentDocument:
+                    exists: false
+    test: current.res.status == 403 && current.res.body.error.status == "PERMISSION_DENIED"

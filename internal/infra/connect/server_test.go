@@ -637,7 +637,10 @@ func TestRoutesIssueFirestoreTokenForConnectionClient(t *testing.T) {
 
 	server := newTestServerWith(t, application.NewSignalingService(repo, minter), idp)
 
-	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), &edgebridgev1.IssueFirestoreTokenRequest{
+	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) {
+		c["client_id"] = connectionClientID
+		c["edge_device_id"] = testEdgeID
+	}), &edgebridgev1.IssueFirestoreTokenRequest{
 		EdgeDeviceId: testEdgeID,
 		SessionId:    testSessionID,
 	})
@@ -679,7 +682,10 @@ func TestRoutesRejectConnectionClientWithoutSessionBinding(t *testing.T) {
 			idp := newTestIdP(t)
 			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), newTestMinter(t)), idp)
 
-			_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), tt.req)
+			_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) {
+				c["client_id"] = connectionClientID
+				c["edge_device_id"] = testEdgeID
+			}), tt.req)
 			if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
 				t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
 			}
@@ -695,7 +701,10 @@ func TestRoutesRejectConnectionClientForUnknownSession(t *testing.T) {
 	repo.EXPECT().SessionExists(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil)
 	server := newTestServerWith(t, application.NewSignalingService(repo, newTestMinter(t)), idp)
 
-	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) { c["client_id"] = connectionClientID }), &edgebridgev1.IssueFirestoreTokenRequest{
+	_, err := issueFirestoreTokenWith(t, server, idp.token(t, func(c jwt.MapClaims) {
+		c["client_id"] = connectionClientID
+		c["edge_device_id"] = testEdgeID
+	}), &edgebridgev1.IssueFirestoreTokenRequest{
 		EdgeDeviceId: testEdgeID,
 		SessionId:    testSessionID,
 	})
@@ -929,4 +938,58 @@ func TestServiceAnswersFixedMessages(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRoutesConnectionClientCameraBinding(t *testing.T) {
+	t.Parallel()
+
+	for _, claim := range []string{"", "8899aabbccddeeff"} {
+		t.Run("reject claim "+claim, func(t *testing.T) {
+			t.Parallel()
+
+			idp := newTestIdP(t)
+			// No repository or minter calls are expected for an unauthorized camera.
+			server := newTestServerWith(t, application.NewSignalingService(newTestRepository(t), newTestMinter(t)), idp)
+			token := idp.token(t, func(c jwt.MapClaims) {
+				c["client_id"] = connectionClientID
+				if claim != "" {
+					c["edge_device_id"] = claim
+				}
+			})
+			client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
+
+			_, err := client.RequestConnection(withToken(context.Background(), token), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: testEdgeID})
+			if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
+				t.Fatalf("RequestConnection() error code = %v, want %v (%v)", got, want, err)
+			}
+
+			_, err = issueFirestoreTokenWith(t, server, token, &edgebridgev1.IssueFirestoreTokenRequest{EdgeDeviceId: testEdgeID, SessionId: testSessionID})
+			if got, want := connectrpc.CodeOf(err), connectrpc.CodePermissionDenied; got != want {
+				t.Fatalf("IssueFirestoreToken() error code = %v, want %v (%v)", got, want, err)
+			}
+		})
+	}
+
+	t.Run("matching claim", func(t *testing.T) {
+		t.Parallel()
+
+		idp := newTestIdP(t)
+		repo := newTestRepository(t)
+		repo.EXPECT().CreateSession(gomock.Any(), domain.TenantID(testTenantID), domain.EventID(testEventID), domain.EdgeID(testEdgeID)).Return(domain.SessionID(testSessionID), nil)
+		server := newTestServer(t, repo, idp)
+		client := edgebridgev1connect.NewSignalingServiceClient(connectrpc.NewClient(connecthttp.NewTransport(server.Client(), server.URL)))
+		token := idp.token(t, func(c jwt.MapClaims) {
+			c["client_id"] = connectionClientID
+			c["edge_device_id"] = testEdgeID
+		})
+
+		res, err := client.RequestConnection(withToken(context.Background(), token), &edgebridgev1.RequestConnectionRequest{EdgeDeviceId: testEdgeID})
+		if err != nil {
+			t.Fatalf("RequestConnection() error = %v", err)
+		}
+
+		if got := res.GetSessionId(); got != testSessionID {
+			t.Errorf("SessionId = %q, want %q", got, testSessionID)
+		}
+	})
 }

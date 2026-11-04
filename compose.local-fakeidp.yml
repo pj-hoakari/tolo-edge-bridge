@@ -1,7 +1,6 @@
-# ローカル開発用のオーバーレイ。fakeidp の edge_device_id 対応コミット（3526ce2）が
-# まだ push されていないため、sibling の tolo-service-gateway をビルドコンテキストにする。
-# compose.yml のリモート pin は standalone 用に残し、fakeidp のコミットを push した後に
-# compose.yml の pin をそのコミットへ bump する（その後このファイルは不要になる）。
+# task runn が既定で使うローカル開発用オーバーレイ。
+# sibling の tolo-service-gateway に edge_device_id 対応（3526ce2 相当）が必要。
+# remote の固定コミットを取得できる場合は task runn:standalone を使える。
 services:
     fakeidp:
         build:

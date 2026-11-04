@@ -87,6 +87,10 @@ func NewService(signaling *application.SignalingService) *Service {
 func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.RequestConnectionRequest) (*edgebridgev1.RequestConnectionResponse, error) {
 	principal, _ := authn.FromContext(ctx)
 
+	if principal.Connection && (principal.EdgeDeviceID == "" || principal.EdgeDeviceID != req.GetEdgeDeviceId()) {
+		return nil, errorOf(ctx, domain.ErrEdgeDeviceIDInvalid)
+	}
+
 	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
 		TenantID: principal.TenantID,
 		EventID:  principal.EventID,
@@ -101,6 +105,10 @@ func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.Reque
 
 func (s *Service) IssueFirestoreToken(ctx context.Context, req *edgebridgev1.IssueFirestoreTokenRequest) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
 	principal, _ := authn.FromContext(ctx)
+
+	if principal.Connection && (principal.EdgeDeviceID == "" || principal.EdgeDeviceID != req.GetEdgeDeviceId()) {
+		return nil, errorOf(ctx, domain.ErrEdgeDeviceIDInvalid)
+	}
 
 	edgeDeviceID := principal.EdgeDeviceID
 	sessionID := ""
