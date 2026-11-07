@@ -52,21 +52,6 @@ runn はホストに入れず、compose の `runn` サービス（profile `runn`
 task runn
 ```
 
-`task runn` は `compose.local-fakeidp.yml` を重ねて compose を起動し、runn を実行する。
-`fakeidp` は sibling の `../tolo-service-gateway` からビルドするため、同ディレクトリに
-`edge_device_id` 対応コミット `3526ce201c99fe00d6121cd00cd6580efc0c437e` 相当の実装が必要になる。
-
-ローカルの tolo-service-gateway を使わず、remote の固定コミットから実行する場合は次を使う。
-
-```bash
-task runn:standalone
-```
-
-`compose.yml` の fakeidp は上記のコミットに固定している。
-このコミットが remote に未 push の間は、`task runn:standalone` と通常の `docker compose up --build` は取得に失敗する。
-その間は `task runn` を使うか、起動コマンドに `-f compose.yml -f compose.local-fakeidp.yml` を指定する。
-コミットを remote から取得できるようになれば、`task runn:standalone` をそのまま使える。
-従来の `task runn:local` は `task runn` に統合した。
 runbook はエミュレータのデータを消し、`fakeidp` からトークンを得てから、次を確かめる
 
 - console 役の `event_access` を付けた `RequestConnection` が session ID を返し、トークンの `tenant_id` と `event_id` に従う `tenants/{tenantId}/events/{eventId}/edgeDevices/{edgeDeviceId}/sessions/{sessionId}` に `status: "requested"` と `createdAt` が書き込まれる
