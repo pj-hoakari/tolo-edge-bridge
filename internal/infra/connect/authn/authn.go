@@ -23,7 +23,7 @@ const (
 	bearerScheme        = "bearer"
 )
 
-var acceptedScopes = []string{"events.read", "events.report"}
+var acceptedScopes = []string{"events.read", "events.report", "events.stream"}
 
 var procedures = map[string][]domain.PeerRole{
 	edgebridgev1connect.SignalingServiceRequestConnectionProcedure:   {domain.PeerRoleConsole},
@@ -38,17 +38,25 @@ var (
 	errMalformedAuthorization = errors.New("authorization header is not one bearer token")
 	errSenderConstrained      = errors.New("event_access carries a key binding")
 	errUnknownClient          = errors.New("client_id is not an accepted client")
-	errMissingScope           = errors.New("scope grants neither events.read nor events.report")
+	errMissingScope           = errors.New("scope grants neither events.read, events.report, nor events.stream")
+	errMissingEdgeDeviceID    = errors.New("edge role token has no edge_device_id")
 	errRoleNotAllowed         = errors.New("the role may not call this procedure")
 )
 
+type Client struct {
+	Role       domain.PeerRole
+	Connection bool
+}
+
 type Principal struct {
-	Subject   string
-	ClientID  string
-	Role      domain.PeerRole
-	TenantID  string
-	EventID   string
-	ExpiresAt time.Time
+	Subject      string
+	ClientID     string
+	Role         domain.PeerRole
+	Connection   bool
+	TenantID     string
+	EventID      string
+	EdgeDeviceID string
+	ExpiresAt    time.Time
 }
 
 type Verifier interface {
@@ -57,11 +65,11 @@ type Verifier interface {
 
 type Authenticator struct {
 	verifier    Verifier
-	clients     map[string]domain.PeerRole
+	clients     map[string]Client
 	errorWriter *connecthttp.ErrorWriter
 }
 
-func New(verifier Verifier, clients map[string]domain.PeerRole) (*Authenticator, error) {
+func New(verifier Verifier, clients map[string]Client) (*Authenticator, error) {
 	if verifier == nil {
 		return nil, ErrMissingVerifier
 	}
@@ -115,7 +123,7 @@ func (a *Authenticator) authenticate(ctx context.Context, header http.Header, pr
 		return zero, errSenderConstrained
 	}
 
-	role, accepted := a.clients[claims.ClientID]
+	client, accepted := a.clients[claims.ClientID]
 	if !accepted {
 		return zero, errUnknownClient
 	}
@@ -124,17 +132,23 @@ func (a *Authenticator) authenticate(ctx context.Context, header http.Header, pr
 		return zero, errMissingScope
 	}
 
-	if !slices.Contains(procedures[procedure], role) {
-		return zero, fmt.Errorf("%w: role %s on %s", errRoleNotAllowed, role, procedure)
+	if !slices.Contains(procedures[procedure], client.Role) {
+		return zero, fmt.Errorf("%w: role %s on %s", errRoleNotAllowed, client.Role, procedure)
+	}
+
+	if client.Role == domain.PeerRoleEdge && claims.EdgeDeviceID == "" {
+		return zero, errMissingEdgeDeviceID
 	}
 
 	return Principal{
-		Subject:   claims.Subject,
-		ClientID:  claims.ClientID,
-		Role:      role,
-		TenantID:  claims.TenantID,
-		EventID:   claims.EventID,
-		ExpiresAt: claims.ExpiresAt,
+		Subject:      claims.Subject,
+		ClientID:     claims.ClientID,
+		Role:         client.Role,
+		Connection:   client.Connection,
+		TenantID:     claims.TenantID,
+		EventID:      claims.EventID,
+		EdgeDeviceID: claims.EdgeDeviceID,
+		ExpiresAt:    claims.ExpiresAt,
 	}, nil
 }
 
@@ -148,7 +162,7 @@ func rejectionOf(err error) *connectrpc.Error {
 	switch {
 	case errors.Is(err, externaltoken.ErrKeysUnavailable):
 		return connectrpc.NewError(connectrpc.CodeUnavailable, "authentication unavailable").WithCause(err)
-	case errors.Is(err, errUnknownClient), errors.Is(err, errMissingScope), errors.Is(err, errRoleNotAllowed):
+	case errors.Is(err, errUnknownClient), errors.Is(err, errMissingScope), errors.Is(err, errMissingEdgeDeviceID), errors.Is(err, errRoleNotAllowed):
 		return connectrpc.NewError(connectrpc.CodePermissionDenied, "permission denied").WithCause(err)
 	default:
 		return connectrpc.NewError(connectrpc.CodeUnauthenticated, "unauthenticated").WithCause(err)

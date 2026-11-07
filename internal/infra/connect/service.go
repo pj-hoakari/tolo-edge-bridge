@@ -55,6 +55,11 @@ var clientErrors = []struct {
 	{domain.ErrPeerRoleInvalid, connectrpc.CodeUnauthenticated, "client_id has no peer role"},
 	{domain.ErrExpiresAtRequired, connectrpc.CodeUnauthenticated, "expiry is missing from the token"},
 	{domain.ErrEdgeIDRequired, connectrpc.CodeInvalidArgument, "edge_device_id is required"},
+	{domain.ErrEdgeDeviceIDRequired, connectrpc.CodePermissionDenied, "edge_device_id is required"},
+	{domain.ErrEdgeDeviceIDInvalid, connectrpc.CodePermissionDenied, "edge_device_id or session_id is invalid"},
+	{domain.ErrSessionIDRequired, connectrpc.CodePermissionDenied, "session_id is required"},
+	{domain.ErrSessionIDInvalid, connectrpc.CodePermissionDenied, "edge_device_id or session_id is invalid"},
+	{domain.ErrSessionNotFound, connectrpc.CodePermissionDenied, "session does not belong to the edge device"},
 }
 
 func errorOf(ctx context.Context, err error) *connectrpc.Error {
@@ -82,6 +87,10 @@ func NewService(signaling *application.SignalingService) *Service {
 func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.RequestConnectionRequest) (*edgebridgev1.RequestConnectionResponse, error) {
 	principal, _ := authn.FromContext(ctx)
 
+	if principal.Connection && (principal.EdgeDeviceID == "" || principal.EdgeDeviceID != req.GetEdgeDeviceId()) {
+		return nil, errorOf(ctx, domain.ErrEdgeDeviceIDInvalid)
+	}
+
 	sessionID, err := s.signaling.RequestConnection(ctx, application.RequestConnectionInput{
 		TenantID: principal.TenantID,
 		EventID:  principal.EventID,
@@ -94,15 +103,39 @@ func (s *Service) RequestConnection(ctx context.Context, req *edgebridgev1.Reque
 	return &edgebridgev1.RequestConnectionResponse{SessionId: string(sessionID)}, nil
 }
 
-func (s *Service) IssueFirestoreToken(ctx context.Context, _ *edgebridgev1.IssueFirestoreTokenRequest) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
+func (s *Service) IssueFirestoreToken(ctx context.Context, req *edgebridgev1.IssueFirestoreTokenRequest) (*edgebridgev1.IssueFirestoreTokenResponse, error) {
 	principal, _ := authn.FromContext(ctx)
 
+	if principal.Connection && (principal.EdgeDeviceID == "" || principal.EdgeDeviceID != req.GetEdgeDeviceId()) {
+		return nil, errorOf(ctx, domain.ErrEdgeDeviceIDInvalid)
+	}
+
+	edgeDeviceID := principal.EdgeDeviceID
+	sessionID := ""
+
+	connection := principal.Connection
+	if !connection && principal.Role == domain.PeerRoleConsole &&
+		(req.GetEdgeDeviceId() != "" || req.GetSessionId() != "") {
+		// The management console token can narrow itself to one camera session.
+		// Supplying only one half is refused by the application layer, which
+		// requires both fields for a bound token.
+		connection = true
+	}
+
+	if connection {
+		edgeDeviceID = req.GetEdgeDeviceId()
+		sessionID = req.GetSessionId()
+	}
+
 	token, err := s.signaling.IssueFirestoreToken(ctx, application.IssueFirestoreTokenInput{
-		Subject:   principal.Subject,
-		TenantID:  principal.TenantID,
-		EventID:   principal.EventID,
-		Role:      principal.Role,
-		ExpiresAt: principal.ExpiresAt,
+		Subject:      principal.Subject,
+		TenantID:     principal.TenantID,
+		EventID:      principal.EventID,
+		Role:         principal.Role,
+		EdgeDeviceID: edgeDeviceID,
+		SessionID:    sessionID,
+		Connection:   connection,
+		ExpiresAt:    principal.ExpiresAt,
 	})
 	if err != nil {
 		return nil, errorOf(ctx, err)

@@ -14,7 +14,7 @@ services:
 
     fakeidp:
         build:
-            context: https://github.com/pj-hoakari/tolo-service-gateway.git#a61f55d8f1124a09839711cbc7d960ddf59f9456
+            context: https://github.com/pj-hoakari/tolo-service-gateway.git#3526ce201c99fe00d6121cd00cd6580efc0c437e
             target: fakeidp
         environment:
             SERVER_ADDR: :8080
@@ -36,6 +36,8 @@ services:
             IDP_JWKS_URL: http://fakeidp:8080/oauth2/jwks
             CONSOLE_CLIENT_ID: console-ui
             EDGE_CLIENT_ID: edge-page
+            CAMERA_CLIENT_ID: esp-camera
+            CONNECTION_CLIENT_ID: observation-connection
         ports:
             - "8080:8080"
         depends_on:
